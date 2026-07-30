@@ -1186,17 +1186,6 @@ read_addend (arelent *rel, asection *s)
 	    addend = bfd_get_16 (s->owner, buf);
 	}
       break;
-    case 12:
-    case 14:
-    case 19:
-    case 21:
-      /* AArch64 instruction-embedded immediates (ADRP, ADD, LDR, etc.)
-	 cannot be handled by the runtime pseudo-relocator because the
-	 value is split across instruction encoding fields.  Fall through
-	 to the generic error handler below.  */
-      ok = true;
-      addend = 0;
-      break;
     case 26:
     case 32:
       ok = bfd_get_section_contents (s->owner, s, buf, rel->address, 4);
@@ -1225,19 +1214,6 @@ make_import_fixup (arelent *rel, asection *s, char *name, const char *symname)
 {
   struct bfd_symbol *sym = *rel->sym_ptr_ptr;
   bfd_vma addend;
-
-  /* AArch64 auto-import only supports ADDR32 and ADDR64 relocations.
-     Instruction-embedded immediates (ADRP, ADD, LDR) have bitsize 12
-     or 21 and cannot be handled by the runtime pseudo-relocator.  */
-  if (bfd_get_arch (link_info.output_bfd) == bfd_arch_aarch64
-      && rel->howto->bitsize != 32 && rel->howto->bitsize != 64)
-    {
-      einfo (_("%X%P: %H: cannot auto-import '%s'"
-	       " (relocation bitsize=%d); "
-	       "use --disable-auto-import or add __declspec(dllimport)\n"),
-	     s->owner, s, rel->address, sym->name, rel->howto->bitsize);
-      return;
-    }
 
   if (pep_dll_extra_pe_debug)
     printf ("arelent: %s@%#lx: add=%li\n", sym->name,
