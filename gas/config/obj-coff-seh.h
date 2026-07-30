@@ -25,6 +25,8 @@
   The third is the IA64 and x64 version. Note, the IA64 isn't implemented yet,
   but to find information about it, please see specification about IA64 on
   http://download.intel.com/design/Itanium/Downloads/245358.pdf file.
+  The fourth is for AArch64 (ARM64) Windows, which uses the same pdata/xdata
+  model as x64 but with different unwind codes and a 2-word pdata entry.
 
   The first version has just entries in the pdata section: BeginAddress,
   EndAddress, ExceptionHandler, HandlerData, and PrologueEndAddress. Each
@@ -41,10 +43,14 @@
   prologue, exception-handler, and additional SEH data is stored
   within the UNWIND_DATA field in the xdata section.
 
+  The fourth (AArch64/ARM64) version has a 2-word pdata entry:
+  BeginAddress (RVA) and UnwindData (RVA), with xdata using ARM64-specific
+  unwind codes.
+
   The pseudos:
   .seh_proc <fct_name>
   .seh_endprologue
-  .seh_handler <handler>[,@unwind][,@except]	(x64)
+  .seh_handler <handler>[,@unwind][,@except]	(x64, aarch64)
   .seh_handler <handler>[,<handler_data>]	(others)
   .seh_handlerdata
   .seh_eh
@@ -57,6 +63,17 @@
   .seh_savexmm
   .seh_pushframe
   .seh_code
+  .seh_save_regp <reg1>,<reg2>,<offset>		(aarch64)
+  .seh_save_fregp <reg1>,<reg2>,<offset>	(aarch64)
+  .seh_save_reg <reg>,<offset>			(aarch64)
+  .seh_save_freg <reg>,<offset>			(aarch64)
+  .seh_save_fplr <offset>			(aarch64)
+  .seh_save_fplr_x <offset>			(aarch64)
+  .seh_save_lrpair <reg>,<offset>		(aarch64)
+  .seh_set_fp					(aarch64)
+  .seh_add_fp <offset>				(aarch64)
+  .seh_nop					(aarch64)
+  .seh_alloc_stack <size>			(aarch64)
 */
 
 #ifndef OBJ_COFF_SEH_H
@@ -78,7 +95,18 @@
 	{"seh_no32", obj_coff_seh_32, 0}, \
 	{"seh_handler", obj_coff_seh_handler, 0}, \
 	{"seh_code", obj_coff_seh_code, 0}, \
-	{"seh_handlerdata", obj_coff_seh_handlerdata, 0},
+	{"seh_handlerdata", obj_coff_seh_handlerdata, 0}, \
+	{"seh_save_regp", obj_coff_seh_aarch64_save_regp, 0}, \
+	{"seh_save_fregp", obj_coff_seh_aarch64_save_fregp, 0}, \
+	{"seh_save_reg", obj_coff_seh_aarch64_save_reg, 0}, \
+	{"seh_save_freg", obj_coff_seh_aarch64_save_freg, 0}, \
+	{"seh_save_fplr", obj_coff_seh_aarch64_save_fplr, 0}, \
+	{"seh_save_fplr_x", obj_coff_seh_aarch64_save_fplr_x, 0}, \
+	{"seh_save_lrpair", obj_coff_seh_aarch64_save_lrpair, 0}, \
+	{"seh_set_fp", obj_coff_seh_aarch64_set_fp, 0}, \
+	{"seh_add_fp", obj_coff_seh_aarch64_add_fp, 0}, \
+	{"seh_nop", obj_coff_seh_aarch64_nop, 0}, \
+	{"seh_alloc_stack", obj_coff_seh_aarch64_alloc_stack, 0},
 
 /* Type definitions.  */
 
@@ -135,8 +163,43 @@ typedef enum seh_kind {
   seh_kind_unknown = 0,
   seh_kind_mips = 1,  /* Used for MIPS and x86 pdata generation.  */
   seh_kind_arm = 2,   /* Used for ARM, PPC, SH3, and SH4 pdata (PDATA_EH) generation.  */
-  seh_kind_x64 = 3    /* Used for IA64 and x64 pdata/xdata generation.  */
+  seh_kind_x64 = 3,   /* Used for IA64 and x64 pdata/xdata generation.  */
+  seh_kind_aarch64 = 4 /* Used for AArch64 (ARM64) Windows pdata/xdata generation.  */
 } seh_kind;
+
+/* AArch64 unwind opcodes.  */
+#define AARCH64_UOP_ALLOC_SMALL  0x00
+#define AARCH64_UOP_ALLOC_MEDIUM 0xC0
+#define AARCH64_UOP_ALLOC_LARGE  0xE0
+#define AARCH64_UOP_SAVE_R19R20X 0x20
+#define AARCH64_UOP_SAVE_FPLRX   0x80
+#define AARCH64_UOP_SAVE_FPLR    0x40
+#define AARCH64_UOP_SAVE_REG     0xD0
+#define AARCH64_UOP_SAVE_REG_X   0xD4
+#define AARCH64_UOP_SAVE_REG_P   0xC8
+#define AARCH64_UOP_SAVE_REG_PX  0xCC
+#define AARCH64_UOP_SAVE_LRPAIR  0xD6
+#define AARCH64_UOP_SAVE_FREG    0xDC
+#define AARCH64_UOP_SAVE_FREG_X  0xDE
+#define AARCH64_UOP_SAVE_FREG_P  0xD8
+#define AARCH64_UOP_SAVE_FREG_PX 0xDA
+#define AARCH64_UOP_SET_FP       0xE1
+#define AARCH64_UOP_ADD_FP       0xE2
+#define AARCH64_UOP_NOP          0xE3
+#define AARCH64_UOP_END          0xE4
+#define AARCH64_UOP_SAVE_NEXT    0xE6
+#define AARCH64_UOP_TRAP_FRAME   0xE8
+#define AARCH64_UOP_PUSH_MACH    0xE9
+#define AARCH64_UOP_CONTEXT      0xEA
+#define AARCH64_UOP_EC_CONTEXT   0xEB
+#define AARCH64_UOP_CLEAR_UNWOUND_TO_CALL 0xEC
+#define AARCH64_UOP_PAC_SIGN_LR  0xFC
+#define AARCH64_UOP_SAVE_ANY_REG_I   0xE7
+#define AARCH64_UOP_SAVE_ANY_REG_IP  0xE7
+#define AARCH64_UOP_SAVE_ANY_REG_D   0xE7
+#define AARCH64_UOP_SAVE_ANY_REG_DP  0xE7
+#define AARCH64_UOP_SAVE_ANY_REG_Q   0xE7
+#define AARCH64_UOP_SAVE_ANY_REG_QP  0xE7
 
 /* Forward declarations.  */
 static void obj_coff_seh_stackalloc (int);
@@ -152,6 +215,17 @@ static void obj_coff_seh_proc  (int);
 static void obj_coff_seh_handler (int);
 static void obj_coff_seh_handlerdata (int);
 static void obj_coff_seh_code (int);
+static void obj_coff_seh_aarch64_save_regp (int);
+static void obj_coff_seh_aarch64_save_fregp (int);
+static void obj_coff_seh_aarch64_save_reg (int);
+static void obj_coff_seh_aarch64_save_freg (int);
+static void obj_coff_seh_aarch64_save_fplr (int);
+static void obj_coff_seh_aarch64_save_fplr_x (int);
+static void obj_coff_seh_aarch64_save_lrpair (int);
+static void obj_coff_seh_aarch64_set_fp (int);
+static void obj_coff_seh_aarch64_add_fp (int);
+static void obj_coff_seh_aarch64_nop (int);
+static void obj_coff_seh_aarch64_alloc_stack (int);
 
 #define UNDSEC bfd_und_section_ptr
 
