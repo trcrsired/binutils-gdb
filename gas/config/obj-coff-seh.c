@@ -1232,46 +1232,57 @@ seh_aarch64_write_function_xdata (seh_context *c)
   int code_bytes = seh_aarch64_size_prologue_data (c) + 1;
   code_words = (code_bytes + 3) / 4;
 
-  /* Header word:
-     bits [1:0] = Version (0)
-     bits [4:2] = Function Length (high bits, 3 bits)
-     bit  5    = Exception Handler Present (X)
-     bit  6    = Epilogues Present (E)
-     bits [8:7] = Code Words (2 bits)
-     bit  9    = Extended Code Words
-     bits [17:10] = Epilog Count (if E=1, else 0)
-     bits [31:18] = Function Length (low 14 bits)
-  */
-  epilog_count = 0;
-  unsigned int header = (func_length << 18);
-  if (code_words > 3)
-    header |= (1 << 9) | ((code_words >> 2) << 10);
-  else
-    header |= (code_words << 7);
+  /* A function with no prologue codes only needs the END marker.
+     In that case, code_words is 0 and no unwind code bytes are emitted.  */
+  bool no_unwind_codes = (code_bytes == 1);
+  if (no_unwind_codes)
+    code_words = 0;
 
+  /* Header word (Microsoft ARM64 SEH xdata format):
+     bits [0:17]  = Function Length / 4 (18 bits)
+     bits [18:21] = Version (4 bits, must be 0)
+     bit  [22]    = X (Extended Epilog Count)
+     bit  [23]    = E (Exception Handler Present)
+     bits [24:27] = Epilog Count (4 bits)
+     bits [28:31] = Code Words (4 bits) */
+  epilog_count = 0;
+  unsigned int header = func_length & 0x3ffff;
+  if (code_words > 0xf)
+    {
+      header |= (0 << 28);
+      header |= ((epilog_count & 0xf) << 24);
+    }
+  else
+    {
+      header |= ((code_words & 0xf) << 28);
+      header |= ((epilog_count & 0xf) << 24);
+    }
   if (c->handler_flags & (UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER))
-    header |= (1 << 5);
+    header |= (1 << 23);
 
   out_four (header);
 
   /* If extended code words needed, emit extension word.  */
-  if (code_words > 3)
+  if (code_words > 0xf)
     {
-      /* Extended header: [CodeWords:8][EpilogCount:16][EpilogStart:8].  */
-      unsigned int ext = (code_words & 0xff) | (epilog_count << 8);
+      unsigned int ext = (code_words & 0xff)
+                         | ((epilog_count & 0xffff) << 8)
+                         | (0 << 24);
       out_four (ext);
     }
 
-  /* Write epilogue scopes (none for simple functions).  */
+  /* Write prologue unwind codes (skipped when no_unwind_codes).  */
+  if (!no_unwind_codes)
+    seh_aarch64_write_prologue_data (c);
 
-  /* Write prologue unwind codes.  */
-  seh_aarch64_write_prologue_data (c);
-
-  /* Pad to 4-byte alignment.  */
-  int remainder = (code_bytes) & 3;
-  if (remainder)
-    for (int i = 0; i < 4 - remainder; i++)
-      out_one (AARCH64_UOP_NOP);
+  /* Pad to 4-byte alignment.  Only needed when unwind codes are present.  */
+  if (!no_unwind_codes)
+    {
+      int remainder = (code_bytes) & 3;
+      if (remainder)
+        for (int i = 0; i < 4 - remainder; i++)
+          out_one (AARCH64_UOP_NOP);
+    }
 
   /* If exception handler present, emit it.  */
   if (c->handler_flags & (UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER))
