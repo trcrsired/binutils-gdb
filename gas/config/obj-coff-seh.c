@@ -221,6 +221,46 @@ obj_coff_seh_handlerdata (int what ATTRIBUTE_UNUSED)
 /* Mark end of current context.  */
 
 static void
+out_one (int byte)
+{
+  char *p = frag_more (1);
+  md_number_to_chars (p, byte, 1);
+}
+
+static void
+out_two (int data)
+{
+  char *p = frag_more (2);
+  md_number_to_chars (p, data, 2);
+}
+
+static void
+out_four (int data)
+{
+  char *p = frag_more (4);
+  md_number_to_chars (p, data, 4);
+}
+
+/* Write xdata for an x64 function (passthrough to existing
+   xdata output via prologue elements).  */
+
+static void
+seh_x64_write_function_xdata (seh_context *c ATTRIBUTE_UNUSED)
+{
+  /* The x64 xdata is already emitted incrementally as prologue
+     elements are processed; this function is a no-op placeholder
+     for consistency with the aarch64 dispatch.  */
+}
+
+/* Write pdata for an ARM (WinCE-style) function (no-op stub).  */
+
+static void
+seh_arm_write_function_pdata (seh_context *c ATTRIBUTE_UNUSED)
+{
+  abort ();
+}
+
+static void
 do_seh_endproc (void)
 {
   seh_ctx_cur->end_addr = symbol_temp_new_now ();
@@ -1225,7 +1265,6 @@ seh_aarch64_write_function_xdata (seh_context *c)
   /* Write epilogue scopes (none for simple functions).  */
 
   /* Write prologue unwind codes.  */
-  int prologue_start = (ftell (stdout) < 0 ? 0 : 0); /* track position */
   seh_aarch64_write_prologue_data (c);
 
   /* Pad to 4-byte alignment.  */
