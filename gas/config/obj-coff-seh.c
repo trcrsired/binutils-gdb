@@ -43,6 +43,8 @@ seh_get_target_kind (void)
   switch (bfd_get_arch (stdoutput))
     {
     case bfd_arch_aarch64:
+      return seh_kind_aarch64;
+
     case bfd_arch_arm:
     case bfd_arch_powerpc:
     case bfd_arch_sh:
@@ -176,7 +178,8 @@ obj_coff_seh_handler (int what ATTRIBUTE_UNUSED)
   if (!skip_whitespace_and_comma (0))
     return;
 
-  if (seh_get_target_kind () == seh_kind_x64)
+  if (seh_get_target_kind () == seh_kind_x64
+      || seh_get_target_kind () == seh_kind_aarch64)
     {
       do
 	{
@@ -208,7 +211,7 @@ obj_coff_seh_handler (int what ATTRIBUTE_UNUSED)
 static void
 obj_coff_seh_handlerdata (int what ATTRIBUTE_UNUSED)
 {
-  if (!verify_context_and_target (".seh_handlerdata", seh_kind_x64))
+  if (!verify_context_and_target (".seh_handlerdata", seh_get_target_kind ()))
     return;
   demand_empty_rest_of_line ();
 
@@ -216,6 +219,46 @@ obj_coff_seh_handlerdata (int what ATTRIBUTE_UNUSED)
 }
 
 /* Mark end of current context.  */
+
+static void
+out_one (int byte)
+{
+  char *p = frag_more (1);
+  md_number_to_chars (p, byte, 1);
+}
+
+static void
+out_two (int data)
+{
+  char *p = frag_more (2);
+  md_number_to_chars (p, data, 2);
+}
+
+static void
+out_four (int data)
+{
+  char *p = frag_more (4);
+  md_number_to_chars (p, data, 4);
+}
+
+/* Write xdata for an x64 function (passthrough to existing
+   xdata output via prologue elements).  */
+
+static void
+seh_x64_write_function_xdata (seh_context *c ATTRIBUTE_UNUSED)
+{
+  /* The x64 xdata is already emitted incrementally as prologue
+     elements are processed; this function is a no-op placeholder
+     for consistency with the aarch64 dispatch.  */
+}
+
+/* Write pdata for an ARM (WinCE-style) function (no-op stub).  */
+
+static void
+seh_arm_write_function_pdata (seh_context *c ATTRIBUTE_UNUSED)
+{
+  abort ();
+}
 
 static void
 do_seh_endproc (void)
@@ -272,7 +315,8 @@ obj_coff_seh_proc (int what ATTRIBUTE_UNUSED)
 
   seh_ctx_cur->code_seg = now_seg;
 
-  if (seh_get_target_kind () == seh_kind_x64)
+  if (seh_get_target_kind () == seh_kind_x64
+      || seh_get_target_kind () == seh_kind_aarch64)
     {
       x_segcur = seh_hash_find_or_make (seh_ctx_cur->code_seg, ".xdata");
       seh_ctx_cur->subsection = x_segcur->subseg;
@@ -565,33 +609,469 @@ obj_coff_seh_setframe (int what ATTRIBUTE_UNUSED)
       seh_x64_make_prologue_element (UWOP_SET_FPREG, 0, 0);
     }
 }
-
-/* Data writing routines.  */
 
-/* Output raw integers in 1, 2, or 4 bytes.  */
+/* AArch64 support.  */
 
-static inline void
-out_one (int byte)
+/* AArch64 register name tables.  */
+static const char * const aarch64_int_regs[31] = {
+  "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7",
+  "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15",
+  "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23",
+  "x24", "x25", "x26", "x27", "x28", "x29", "x30"
+};
+
+static const char * const aarch64_fp_regs[32] = {
+  "d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7",
+  "d8", "d9", "d10", "d11", "d12", "d13", "d14", "d15",
+  "d16", "d17", "d18", "d19", "d20", "d21", "d22", "d23",
+  "d24", "d25", "d26", "d27", "d28", "d29", "d30", "d31"
+};
+
+/* Read an AArch64 integer register from input stream.
+   Returns the register number (0-30) or -1 on error.
+   Also accepts "fp" (x29) and "lr" (x30).  */
+static int
+seh_aarch64_read_int_reg (const char *directive, int min_reg, int max_reg)
 {
-  FRAG_APPEND_1_CHAR (byte);
+  char name_end;
+  char *symbol_name;
+  int i;
+
+  SKIP_WHITESPACE ();
+  name_end = get_symbol_name (&symbol_name);
+
+  /* Check for special names.  */
+  if (strcasecmp (symbol_name, "fp") == 0)
+    i = 29;
+  else if (strcasecmp (symbol_name, "lr") == 0)
+    i = 30;
+  else
+    {
+      for (i = 0; i < 31; i++)
+	if (!strcasecmp (aarch64_int_regs[i], symbol_name))
+	  break;
+    }
+
+  (void) restore_line_pointer (name_end);
+
+  if (i > max_reg || i < min_reg)
+    {
+      as_bad (_("invalid register for %s"), directive);
+      return -1;
+    }
+
+  return i;
 }
 
-static inline void
-out_two (int data)
+/* Read an AArch64 FP/SIMD register from input stream.
+   Returns the register number (0-31) or -1 on error.  */
+static int
+seh_aarch64_read_fp_reg (const char *directive)
 {
-  md_number_to_chars (frag_more (2), data, 2);
+  char name_end;
+  char *symbol_name;
+  int i;
+
+  SKIP_WHITESPACE ();
+  name_end = get_symbol_name (&symbol_name);
+
+  for (i = 0; i < 32; i++)
+    if (!strcasecmp (aarch64_fp_regs[i], symbol_name))
+      break;
+
+  (void) restore_line_pointer (name_end);
+
+  if (i == 32)
+    {
+      as_bad (_("invalid floating-point register for %s"), directive);
+      return -1;
+    }
+
+  return i;
 }
 
-static inline void
-out_four (int data)
-{
-  md_number_to_chars (frag_more (4), data, 4);
-}
-
-/* Write out prologue data for x64.  */
-
+/* Add a prologue element to the AArch64 SEH context.  */
 static void
-seh_x64_write_prologue_data (const seh_context *c)
+seh_aarch64_make_prologue_element (int code, int info, offsetT off)
+{
+  seh_prologue_element *n;
+
+  if (seh_ctx_cur == NULL)
+    return;
+  if (seh_ctx_cur->elems_count == seh_ctx_cur->elems_max)
+    {
+      seh_ctx_cur->elems_max += 8;
+      seh_ctx_cur->elems = XRESIZEVEC (seh_prologue_element,
+				       seh_ctx_cur->elems,
+				       seh_ctx_cur->elems_max);
+    }
+
+  n = &seh_ctx_cur->elems[seh_ctx_cur->elems_count++];
+  n->code = code;
+  n->info = info;
+  n->off = off;
+  n->pc_addr = symbol_temp_new_now ();
+}
+
+/* .seh_save_regp <reg1>, <reg2>, <offset> (aarch64)
+   Save register pair at offset from SP.  */
+static void
+obj_coff_seh_aarch64_save_regp (int what ATTRIBUTE_UNUSED)
+{
+  int reg1, reg2;
+  offsetT off;
+
+  if (!verify_context_and_target (".seh_save_regp", seh_kind_aarch64)
+      || !seh_validate_seg (".seh_save_regp"))
+    return;
+
+  reg1 = seh_aarch64_read_int_reg (".seh_save_regp", 0, 30);
+  if (!skip_whitespace_and_comma (1))
+    return;
+  reg2 = seh_aarch64_read_int_reg (".seh_save_regp", 0, 30);
+  if (!skip_whitespace_and_comma (1))
+    return;
+  off = get_absolute_expression ();
+  demand_empty_rest_of_line ();
+
+  if (reg1 < 0 || reg2 < 0)
+    return;
+  if (off < 0 || (off & 7))
+    {
+      as_bad (_(".seh_save_regp offset must be non-negative and 8-byte aligned"));
+      return;
+    }
+
+  /* Check for special case: saving x29,x30 (FPLR pair).  */
+  if (reg1 == 29 && reg2 == 30)
+    {
+      if (off <= 0x3F * 8)
+	{
+	  seh_aarch64_make_prologue_element (AARCH64_UOP_SAVE_FPLR, off >> 3, 0);
+	  return;
+	}
+    }
+
+  seh_aarch64_make_prologue_element (AARCH64_UOP_SAVE_REG_P, reg1, off);
+}
+
+/* .seh_save_fregp <reg1>, <reg2>, <offset> (aarch64)
+   Save FP/SIMD register pair.  */
+static void
+obj_coff_seh_aarch64_save_fregp (int what ATTRIBUTE_UNUSED)
+{
+  int reg1, reg2;
+  offsetT off;
+
+  if (!verify_context_and_target (".seh_save_fregp", seh_kind_aarch64)
+      || !seh_validate_seg (".seh_save_fregp"))
+    return;
+
+  reg1 = seh_aarch64_read_fp_reg (".seh_save_fregp");
+  if (!skip_whitespace_and_comma (1))
+    return;
+  reg2 = seh_aarch64_read_fp_reg (".seh_save_fregp");
+  if (!skip_whitespace_and_comma (1))
+    return;
+  off = get_absolute_expression ();
+  demand_empty_rest_of_line ();
+
+  if (reg1 < 0 || reg2 < 0)
+    return;
+  if (off < 0 || (off & 7))
+    {
+      as_bad (_(".seh_save_fregp offset must be non-negative and 8-byte aligned"));
+      return;
+    }
+
+  seh_aarch64_make_prologue_element (AARCH64_UOP_SAVE_FREG_P, reg1, off);
+}
+
+/* .seh_save_reg <reg>, <offset> (aarch64)
+   Save a single integer register.  */
+static void
+obj_coff_seh_aarch64_save_reg (int what ATTRIBUTE_UNUSED)
+{
+  int reg;
+  offsetT off;
+
+  if (!verify_context_and_target (".seh_save_reg", seh_kind_aarch64)
+      || !seh_validate_seg (".seh_save_reg"))
+    return;
+
+  reg = seh_aarch64_read_int_reg (".seh_save_reg", 0, 30);
+  if (!skip_whitespace_and_comma (1))
+    return;
+  off = get_absolute_expression ();
+  demand_empty_rest_of_line ();
+
+  if (reg < 0)
+    return;
+  if (off < 0 || (off & 7))
+    {
+      as_bad (_(".seh_save_reg offset must be non-negative and 8-byte aligned"));
+      return;
+    }
+
+  seh_aarch64_make_prologue_element (AARCH64_UOP_SAVE_REG, reg, off);
+}
+
+/* .seh_save_freg <reg>, <offset> (aarch64)
+   Save a single FP/SIMD register.  */
+static void
+obj_coff_seh_aarch64_save_freg (int what ATTRIBUTE_UNUSED)
+{
+  int reg;
+  offsetT off;
+
+  if (!verify_context_and_target (".seh_save_freg", seh_kind_aarch64)
+      || !seh_validate_seg (".seh_save_freg"))
+    return;
+
+  reg = seh_aarch64_read_fp_reg (".seh_save_freg");
+  if (!skip_whitespace_and_comma (1))
+    return;
+  off = get_absolute_expression ();
+  demand_empty_rest_of_line ();
+
+  if (reg < 0)
+    return;
+  if (off < 0 || (off & 7))
+    {
+      as_bad (_(".seh_save_freg offset must be non-negative and 8-byte aligned"));
+      return;
+    }
+
+  seh_aarch64_make_prologue_element (AARCH64_UOP_SAVE_FREG, reg, off);
+}
+
+/* .seh_save_fplr <offset> (aarch64)
+   Save x29 (FP) and x30 (LR) at a positive offset from SP.  */
+static void
+obj_coff_seh_aarch64_save_fplr (int what ATTRIBUTE_UNUSED)
+{
+  offsetT off;
+
+  if (!verify_context_and_target (".seh_save_fplr", seh_kind_aarch64)
+      || !seh_validate_seg (".seh_save_fplr"))
+    return;
+
+  off = get_absolute_expression ();
+  demand_empty_rest_of_line ();
+
+  if (off < 0 || (off & 7))
+    {
+      as_bad (_(".seh_save_fplr offset must be non-negative and 8-byte aligned"));
+      return;
+    }
+
+  seh_aarch64_make_prologue_element (AARCH64_UOP_SAVE_FPLR, off >> 3, 0);
+}
+
+/* .seh_save_fplr_x <offset> (aarch64)
+   Save x29 (FP) and x30 (LR) with predecrement (stp x29, x30, [sp, #-N]!).  */
+static void
+obj_coff_seh_aarch64_save_fplr_x (int what ATTRIBUTE_UNUSED)
+{
+  offsetT off;
+
+  if (!verify_context_and_target (".seh_save_fplr_x", seh_kind_aarch64)
+      || !seh_validate_seg (".seh_save_fplr_x"))
+    return;
+
+  off = get_absolute_expression ();
+  demand_empty_rest_of_line ();
+
+  if (off < 0 || (off & 15))
+    {
+      as_bad (_(".seh_save_fplr_x offset must be negative and 16-byte aligned"));
+      return;
+    }
+  if (off > 0x3F * 8)
+    {
+      as_bad (_(".seh_save_fplr_x offset out of range (max 504)"));
+      return;
+    }
+
+  seh_aarch64_make_prologue_element (AARCH64_UOP_SAVE_FPLRX, (off >> 3) - 1, 0);
+}
+
+/* .seh_save_lrpair <reg>, <offset> (aarch64)
+   Save x30 (LR) and another register at offset from SP.  */
+static void
+obj_coff_seh_aarch64_save_lrpair (int what ATTRIBUTE_UNUSED)
+{
+  int reg;
+  offsetT off;
+
+  if (!verify_context_and_target (".seh_save_lrpair", seh_kind_aarch64)
+      || !seh_validate_seg (".seh_save_lrpair"))
+    return;
+
+  reg = seh_aarch64_read_int_reg (".seh_save_lrpair", 0, 28);
+  if (!skip_whitespace_and_comma (1))
+    return;
+  off = get_absolute_expression ();
+  demand_empty_rest_of_line ();
+
+  if (reg < 0)
+    return;
+  if (off < 0 || (off & 7))
+    {
+      as_bad (_(".seh_save_lrpair offset must be non-negative and 8-byte aligned"));
+      return;
+    }
+
+  seh_aarch64_make_prologue_element (AARCH64_UOP_SAVE_LRPAIR, (reg - 19) >> 1, off >> 3);
+}
+
+/* .seh_set_fp (aarch64)
+   Set frame pointer (mov x29, sp).  */
+static void
+obj_coff_seh_aarch64_set_fp (int what ATTRIBUTE_UNUSED)
+{
+  if (!verify_context_and_target (".seh_set_fp", seh_kind_aarch64)
+      || !seh_validate_seg (".seh_set_fp"))
+    return;
+  demand_empty_rest_of_line ();
+
+  seh_aarch64_make_prologue_element (AARCH64_UOP_SET_FP, 0, 0);
+}
+
+/* .seh_add_fp <offset> (aarch64)
+   Add offset to frame pointer (add x29, sp, #N).  */
+static void
+obj_coff_seh_aarch64_add_fp (int what ATTRIBUTE_UNUSED)
+{
+  offsetT off;
+
+  if (!verify_context_and_target (".seh_add_fp", seh_kind_aarch64)
+      || !seh_validate_seg (".seh_add_fp"))
+    return;
+
+  off = get_absolute_expression ();
+  demand_empty_rest_of_line ();
+
+  seh_aarch64_make_prologue_element (AARCH64_UOP_ADD_FP, off >> 3, 0);
+}
+
+/* .seh_nop (aarch64)
+   No-op padding in the unwind code.  */
+static void
+obj_coff_seh_aarch64_nop (int what ATTRIBUTE_UNUSED)
+{
+  if (!verify_context_and_target (".seh_nop", seh_kind_aarch64)
+      || !seh_validate_seg (".seh_nop"))
+    return;
+  demand_empty_rest_of_line ();
+
+  seh_aarch64_make_prologue_element (AARCH64_UOP_NOP, 0, 0);
+}
+
+/* .seh_alloc_stack <size> (aarch64)
+   Allocate stack space.  */
+static void
+obj_coff_seh_aarch64_alloc_stack (int what ATTRIBUTE_UNUSED)
+{
+  offsetT off;
+  int code, info;
+
+  if (!verify_context_and_target (".seh_alloc_stack", seh_kind_aarch64)
+      || !seh_validate_seg (".seh_alloc_stack"))
+    return;
+
+  off = get_absolute_expression ();
+  demand_empty_rest_of_line ();
+
+  if (off == 0)
+    return;
+  if (off < 0)
+    {
+      as_bad (_(".seh_alloc_stack offset is negative"));
+      return;
+    }
+
+  if ((off & 15) == 0 && off <= 0x1F * 16)
+    {
+      code = AARCH64_UOP_ALLOC_SMALL;
+      info = (off / 16) - 1;
+    }
+  else if ((off & 15) == 0 && off <= 0x7FF * 16)
+    {
+      code = AARCH64_UOP_ALLOC_MEDIUM;
+      info = off / 16;
+    }
+  else if ((off & 15) == 0 && off <= (offsetT) 0xFFFFFF * 16)
+    {
+      code = AARCH64_UOP_ALLOC_LARGE;
+      info = 0;
+      off = off / 16;
+    }
+  else
+    {
+      as_bad (_(".seh_alloc_stack offset out of range"));
+      return;
+    }
+
+  seh_aarch64_make_prologue_element (code, info, off);
+}
+
+/* AArch64 xdata writing.  */
+
+/* Count the size of AArch64 unwind code data in bytes.  */
+static int
+seh_aarch64_size_prologue_data (const seh_context *c)
+{
+  int i, ret = 0;
+
+  for (i = c->elems_count - 1; i >= 0; --i)
+    {
+      int code = c->elems[i].code;
+      if (code == AARCH64_UOP_ALLOC_SMALL
+	  || code == AARCH64_UOP_SAVE_R19R20X
+	  || code == AARCH64_UOP_SAVE_FPLRX
+	  || code == AARCH64_UOP_SAVE_FPLR
+	  || code == AARCH64_UOP_SET_FP
+	  || code == AARCH64_UOP_NOP
+	  || code == AARCH64_UOP_END
+	  || code == AARCH64_UOP_SAVE_NEXT
+	  || code == AARCH64_UOP_TRAP_FRAME
+	  || code == AARCH64_UOP_PUSH_MACH
+	  || code == AARCH64_UOP_CONTEXT
+	  || code == AARCH64_UOP_EC_CONTEXT
+	  || code == AARCH64_UOP_CLEAR_UNWOUND_TO_CALL
+	  || code == AARCH64_UOP_PAC_SIGN_LR)
+	ret += 1;
+      else if (code == AARCH64_UOP_ALLOC_MEDIUM
+	       || code == AARCH64_UOP_SAVE_REG
+	       || code == AARCH64_UOP_SAVE_REG_X
+	       || code == AARCH64_UOP_SAVE_REG_P
+	       || code == AARCH64_UOP_SAVE_REG_PX
+	       || code == AARCH64_UOP_SAVE_LRPAIR
+	       || code == AARCH64_UOP_SAVE_FREG
+	       || code == AARCH64_UOP_SAVE_FREG_X
+	       || code == AARCH64_UOP_SAVE_FREG_P
+	       || code == AARCH64_UOP_SAVE_FREG_PX
+	       || code == AARCH64_UOP_ADD_FP)
+	ret += 2;
+      else if (code == AARCH64_UOP_ALLOC_LARGE
+	       || code == AARCH64_UOP_SAVE_ANY_REG_I
+	       || code == AARCH64_UOP_SAVE_ANY_REG_IP
+	       || code == AARCH64_UOP_SAVE_ANY_REG_D
+	       || code == AARCH64_UOP_SAVE_ANY_REG_DP
+	       || code == AARCH64_UOP_SAVE_ANY_REG_Q
+	       || code == AARCH64_UOP_SAVE_ANY_REG_QP)
+	ret += 3;
+      else
+	abort ();
+    }
+
+  return ret;
+}
+
+/* Write out AArch64 prologue unwind codes.  */
+static void
+seh_aarch64_write_prologue_data (const seh_context *c)
 {
   int i;
 
@@ -599,142 +1079,241 @@ seh_x64_write_prologue_data (const seh_context *c)
   for (i = c->elems_count - 1; i >= 0; --i)
     {
       const seh_prologue_element *e = c->elems + i;
-      expressionS exp;
-
-      /* First comes byte offset in code.  */
-      exp.X_op = O_subtract;
-      exp.X_add_symbol = e->pc_addr;
-      exp.X_op_symbol = c->start_addr;
-      exp.X_add_number = 0;
-      emit_expr (&exp, 1);
-
-      /* Second comes code+info packed into a byte.  */
-      out_one ((e->info << 4) | e->code);
 
       switch (e->code)
 	{
-	case UWOP_PUSH_NONVOL:
-	case UWOP_ALLOC_SMALL:
-	case UWOP_SET_FPREG:
-	case UWOP_PUSH_MACHFRAME:
-	  /* These have no extra data.  */
+	case AARCH64_UOP_ALLOC_SMALL:
+	  out_one (AARCH64_UOP_ALLOC_SMALL | (e->info & 0x1f));
 	  break;
 
-	case UWOP_ALLOC_LARGE:
-	  if (e->info)
-	    {
-	case UWOP_SAVE_NONVOL_FAR:
-	case UWOP_SAVE_XMM128_FAR:
-	      /* An unscaled 4 byte offset.  */
-	      out_four (e->off);
-	      break;
-	    }
-	  /* FALLTHRU */
+	case AARCH64_UOP_ALLOC_MEDIUM:
+	  out_one (AARCH64_UOP_ALLOC_MEDIUM | ((e->info >> 8) & 3));
+	  out_one (e->info & 0xff);
+	  break;
 
-	case UWOP_SAVE_NONVOL:
-	case UWOP_SAVE_XMM128:
-	  /* A scaled 2 byte offset.  */
+	case AARCH64_UOP_ALLOC_LARGE:
+	  out_one (AARCH64_UOP_ALLOC_LARGE);
 	  out_two (e->off);
+	  break;
+
+	case AARCH64_UOP_SAVE_R19R20X:
+	  out_one (AARCH64_UOP_SAVE_R19R20X | (e->info & 0x1f));
+	  break;
+
+	case AARCH64_UOP_SAVE_FPLRX:
+	  out_one (AARCH64_UOP_SAVE_FPLRX | (e->info & 0x3f));
+	  break;
+
+	case AARCH64_UOP_SAVE_FPLR:
+	  out_one (AARCH64_UOP_SAVE_FPLR | (e->info & 0x3f));
+	  break;
+
+	case AARCH64_UOP_SAVE_REG:
+	  {
+	    int r = e->info - 19;
+	    out_one (AARCH64_UOP_SAVE_REG | ((r & 0xC) >> 2));
+	    out_one (((r & 0x3) << 6) | ((e->off >> 3) & 0x3f));
+	  }
+	  break;
+
+	case AARCH64_UOP_SAVE_REG_X:
+	  {
+	    int r = e->info - 19;
+	    out_one (AARCH64_UOP_SAVE_REG_X | ((r & 0x8) >> 3));
+	    out_one (((r & 0x7) << 5) | (((e->off >> 3) - 1) & 0x1f));
+	  }
+	  break;
+
+	case AARCH64_UOP_SAVE_REG_P:
+	  {
+	    int r = e->info - 19;
+	    out_one (AARCH64_UOP_SAVE_REG_P | ((r & 0xC) >> 2));
+	    out_one (((r & 0x3) << 6) | ((e->off >> 3) & 0x3f));
+	  }
+	  break;
+
+	case AARCH64_UOP_SAVE_REG_PX:
+	  {
+	    int r = e->info - 19;
+	    out_one (AARCH64_UOP_SAVE_REG_PX | ((r & 0xC) >> 2));
+	    out_one (((r & 0x3) << 6) | (((e->off >> 3) - 1) & 0x3f));
+	  }
+	  break;
+
+	case AARCH64_UOP_SAVE_LRPAIR:
+	  {
+	    int r = e->info - 19;
+	    out_one (AARCH64_UOP_SAVE_LRPAIR | ((r & 0xC) >> 2));
+	    out_one (((r & 0x3) << 6) | ((e->off >> 3) & 0x3f));
+	  }
+	  break;
+
+	case AARCH64_UOP_SAVE_FREG:
+	  {
+	    int r = e->info - 8;
+	    out_one (AARCH64_UOP_SAVE_FREG | ((r & 0x4) >> 2));
+	    out_one (((r & 0x3) << 6) | ((e->off >> 3) & 0x3f));
+	  }
+	  break;
+
+	case AARCH64_UOP_SAVE_FREG_X:
+	  {
+	    int r = e->info - 8;
+	    out_one (AARCH64_UOP_SAVE_FREG_X);
+	    out_one (((r & 0x7) << 5) | (((e->off >> 3) - 1) & 0x1f));
+	  }
+	  break;
+
+	case AARCH64_UOP_SAVE_FREG_P:
+	  {
+	    int r = e->info - 8;
+	    out_one (AARCH64_UOP_SAVE_FREG_P | ((r & 0x4) >> 2));
+	    out_one (((r & 0x3) << 6) | ((e->off >> 3) & 0x3f));
+	  }
+	  break;
+
+	case AARCH64_UOP_SAVE_FREG_PX:
+	  {
+	    int r = e->info - 8;
+	    out_one (AARCH64_UOP_SAVE_FREG_PX | ((r & 0x4) >> 2));
+	    out_one (((r & 0x3) << 6) | (((e->off >> 3) - 1) & 0x3f));
+	  }
+	  break;
+
+	case AARCH64_UOP_SET_FP:
+	case AARCH64_UOP_NOP:
+	case AARCH64_UOP_END:
+	case AARCH64_UOP_SAVE_NEXT:
+	case AARCH64_UOP_TRAP_FRAME:
+	case AARCH64_UOP_PUSH_MACH:
+	case AARCH64_UOP_CONTEXT:
+	case AARCH64_UOP_EC_CONTEXT:
+	case AARCH64_UOP_CLEAR_UNWOUND_TO_CALL:
+	case AARCH64_UOP_PAC_SIGN_LR:
+	  out_one (e->code);
+	  break;
+
+	case AARCH64_UOP_ADD_FP:
+	  out_one (AARCH64_UOP_ADD_FP);
+	  out_one (e->info & 0xff);
 	  break;
 
 	default:
 	  abort ();
 	}
     }
+
+  /* Terminate with END opcode.  */
+  out_one (AARCH64_UOP_END);
 }
 
-static int
-seh_x64_size_prologue_data (const seh_context *c)
-{
-  int i, ret = 0;
-
-  for (i = c->elems_count - 1; i >= 0; --i)
-    switch (c->elems[i].code)
-      {
-      case UWOP_PUSH_NONVOL:
-      case UWOP_ALLOC_SMALL:
-      case UWOP_SET_FPREG:
-      case UWOP_PUSH_MACHFRAME:
-	ret += 1;
-	break;
-
-      case UWOP_SAVE_NONVOL:
-      case UWOP_SAVE_XMM128:
-	ret += 2;
-	break;
-
-      case UWOP_SAVE_NONVOL_FAR:
-      case UWOP_SAVE_XMM128_FAR:
-	ret += 3;
-	break;
-
-      case UWOP_ALLOC_LARGE:
-	ret += (c->elems[i].info ? 3 : 2);
-	break;
-
-      default:
-	abort ();
-      }
-
-  return ret;
-}
-
-/* Write out the xdata information for one function (x64).  */
-
+/* Write the xdata for one AArch64 function.  */
 static void
-seh_x64_write_function_xdata (seh_context *c)
+seh_aarch64_write_function_xdata (seh_context *c)
 {
-  int flags, count_unwind_codes;
-  expressionS exp;
+  int code_words, epilog_count;
+  unsigned int func_length;
 
-  /* Set 4-byte alignment.  */
+  /* 4-byte alignment.  */
   frag_align (2, 0, 0);
 
   c->xdata_addr = symbol_temp_new_now ();
-  flags = c->handler_flags;
-  count_unwind_codes = seh_x64_size_prologue_data (c);
 
-  /* ubyte:3 version, ubyte:5 flags.  */
-  out_one ((flags << 3) | 1);
+  /* Calculate function length in 4-byte units.  Compute it from the
+     symbols' fragment positions rather than resolve_expression, which
+     can fail when the symbols span multiple fragments.  */
+  {
+    addressT off1, off2;
+    fragS *f1 = symbol_get_frag_and_value (c->start_addr, &off1);
+    fragS *f2 = symbol_get_frag_and_value (c->end_addr, &off2);
+    long bytes = 0;
 
-  /* Size of prologue.  */
-  if (c->endprologue_addr)
+    if (f1 == f2)
+      bytes = off2 - off1;
+    else
+      {
+	/* Sum fragment sizes from f1 to f2.  */
+	bytes = off2;
+	for (fragS *f = f1; f && f != f2; f = f->fr_next)
+	  {
+	    if (!f->fr_next)
+	      break;
+	    bytes += f->fr_fix;
+	    if (f->fr_var > 0)
+	      bytes += f->fr_var * f->fr_subtype;
+	  }
+	bytes -= off1;
+      }
+    func_length = bytes < 0 ? 0 : bytes >> 2;
+  }
+
+  /* Count unwind code bytes, including the terminating END.  */
+  int code_bytes = seh_aarch64_size_prologue_data (c) + 1;
+  code_words = (code_bytes + 3) / 4;
+
+  /* A function with no prologue codes only needs the END marker.
+     In that case, code_words is 0 and no unwind code bytes are emitted.  */
+  bool no_unwind_codes = (code_bytes == 1);
+  if (no_unwind_codes)
+    code_words = 0;
+
+  /* Header word (Microsoft ARM64 SEH xdata format, matching LLVM MCWin64EH):
+     bits [0:17]  = Function Length / 4 (18 bits)
+     bit  [20]    = X (Exception Handler Present)
+     bit  [21]    = E (Packed Epilog Present)
+     bits [26:22] = Epilog Count (5 bits)
+     bits [31:27] = Code Words (5 bits) */
+  epilog_count = 0;
+  unsigned int header = func_length & 0x3ffff;
+  if (code_words > 0x1f)
     {
-      exp.X_op = O_subtract;
-      exp.X_add_symbol = c->endprologue_addr;
-      exp.X_op_symbol = c->start_addr;
-      exp.X_add_number = 0;
-      emit_expr (&exp, 1);
+      header |= (0 << 27);
+      header |= ((epilog_count & 0x1f) << 22);
     }
   else
-    out_one (0);
-
-  /* Number of slots (i.e. shorts) in the unwind codes array.  */
-  if (count_unwind_codes > 255)
-    as_fatal (_("too much unwind data in this .seh_proc"));
-  out_one (count_unwind_codes);
-
-  /* ubyte:4 frame-reg, ubyte:4 frame-reg-offset.  */
-  /* Note that frameoff is already a multiple of 16, and therefore
-     the offset is already both scaled and shifted into place.  */
-  out_one (c->frameoff | c->framereg);
-
-  seh_x64_write_prologue_data (c);
-
-  /* We need to align prologue data.  */
-  if (count_unwind_codes & 1)
-    out_two (0);
-
-  if (flags & (UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER))
     {
-      /* Force the use of segment-relative relocations instead of absolute
-         valued expressions.  Don't adjust for constants (e.g. NULL).  */
+      header |= ((code_words & 0x1f) << 27);
+      header |= ((epilog_count & 0x1f) << 22);
+    }
+  if (c->handler_flags & (UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER))
+    header |= (1 << 20);
+
+  out_four (header);
+
+  /* If extended code words needed, emit extension word.
+     bits [15:0] = Epilog Count, bits [23:16] = Code Words.
+     Also emit it when both the code words and epilog count are zero:
+     in that case Windows (and Wine) treat the packed fields as zero and
+     read the actual values from the extension word.  */
+  if (code_words > 0x1f || no_unwind_codes)
+    {
+      unsigned int ext = ((code_words & 0xff) << 16)
+                         | (epilog_count & 0xffff);
+      out_four (ext);
+    }
+
+  /* Write prologue unwind codes (skipped when no_unwind_codes).  */
+  if (!no_unwind_codes)
+    seh_aarch64_write_prologue_data (c);
+
+  /* Pad to 4-byte alignment.  Only needed when unwind codes are present.  */
+  if (!no_unwind_codes)
+    {
+      int remainder = (code_bytes) & 3;
+      if (remainder)
+        for (int i = 0; i < 4 - remainder; i++)
+          out_one (AARCH64_UOP_NOP);
+    }
+
+  /* If exception handler present, emit it.  */
+  if (c->handler_flags & (UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER))
+    {
       if (c->handler.X_op == O_symbol)
-        c->handler.X_op = O_symbol_rva;
+	c->handler.X_op = O_symbol_rva;
       emit_expr (&c->handler, 4);
     }
 
-  /* Handler data will be tacked in here by subsections.  */
+  /* Handler data follows in subsections.  */
 }
 
 /* Write out xdata for one function.  */
@@ -745,67 +1324,21 @@ write_function_xdata (seh_context *c)
   segT save_seg = now_seg;
   int save_subseg = now_subseg;
 
-  /* MIPS, SH, ARM don't have xdata.  */
-  if (seh_get_target_kind () != seh_kind_x64)
-    return;
-
-  switch_xdata (c->subsection, c->code_seg);
-
-  seh_x64_write_function_xdata (c);
+  if (seh_get_target_kind () == seh_kind_x64)
+    {
+      switch_xdata (c->subsection, c->code_seg);
+      seh_x64_write_function_xdata (c);
+    }
+  else if (seh_get_target_kind () == seh_kind_aarch64)
+    {
+      switch_xdata (c->subsection, c->code_seg);
+      seh_aarch64_write_function_xdata (c);
+    }
 
   subseg_set (save_seg, save_subseg);
 }
 
-/* Write pdata section data for one function (arm).  */
 
-static void
-seh_arm_write_function_pdata (seh_context *c)
-{
-  expressionS exp;
-  unsigned int prol_len = 0, func_len = 0;
-  unsigned int val;
-
-  /* Start address of the function.  */
-  exp.X_op = O_symbol;
-  exp.X_add_symbol = c->start_addr;
-  exp.X_add_number = 0;
-  emit_expr (&exp, 4);
-
-  exp.X_op = O_subtract;
-  exp.X_add_symbol = c->end_addr;
-  exp.X_op_symbol = c->start_addr;
-  exp.X_add_number = 0;
-  if (resolve_expression (&exp) && exp.X_op == O_constant)
-    func_len = exp.X_add_number;
-  else
-    as_bad (_(".seh_endproc in a different section from .seh_proc"));
-
-  if (c->endprologue_addr)
-    {
-      exp.X_op = O_subtract;
-      exp.X_add_symbol = c->endprologue_addr;
-      exp.X_op_symbol = c->start_addr;
-      exp.X_add_number = 0;
-
-      if (resolve_expression (&exp) && exp.X_op == O_constant)
-	prol_len = exp.X_add_number;
-      else
-	as_bad (_(".seh_endprologue in a different section from .seh_proc"));
-    }
-
-  /* Both function and prologue are in units of instructions.  */
-  func_len >>= (c->use_instruction_32 ? 2 : 1);
-  prol_len >>= (c->use_instruction_32 ? 2 : 1);
-
-  /* Assemble the second word of the pdata.  */
-  val  = prol_len & 0xff;
-  val |= (func_len & 0x3fffff) << 8;
-  if (c->use_instruction_32)
-    val |= 0x40000000U;
-  if (c->handler_written)
-    val |= 0x80000000U;
-  out_four (val);
-}
 
 /* Write out pdata for one function.  */
 
@@ -856,6 +1389,17 @@ write_function_pdata (seh_context *c)
 
     case seh_kind_arm:
       seh_arm_write_function_pdata (c);
+      break;
+
+    case seh_kind_aarch64:
+      exp.X_op = O_symbol_rva;
+      exp.X_add_number = 0;
+      exp.X_add_symbol = c->start_addr;
+      emit_expr (&exp, 4);
+      exp.X_op = O_symbol_rva;
+      exp.X_add_number = 0;
+      exp.X_add_symbol = c->xdata_addr;
+      emit_expr (&exp, 4);
       break;
 
     default:
