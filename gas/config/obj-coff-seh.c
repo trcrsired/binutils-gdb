@@ -1079,14 +1079,6 @@ seh_aarch64_write_prologue_data (const seh_context *c)
   for (i = c->elems_count - 1; i >= 0; --i)
     {
       const seh_prologue_element *e = c->elems + i;
-      expressionS exp;
-
-      /* Offset in code (in bytes).  */
-      exp.X_op = O_subtract;
-      exp.X_add_symbol = e->pc_addr;
-      exp.X_op_symbol = c->start_addr;
-      exp.X_add_number = 0;
-      emit_expr (&exp, 1);
 
       switch (e->code)
 	{
@@ -1117,65 +1109,75 @@ seh_aarch64_write_prologue_data (const seh_context *c)
 	  break;
 
 	case AARCH64_UOP_SAVE_REG:
-	  out_one (AARCH64_UOP_SAVE_REG);
-	  out_one ((e->info << 4) | (e->off & 0x7f));
+	  {
+	    int r = e->info - 19;
+	    out_one (AARCH64_UOP_SAVE_REG | ((r & 0xC) >> 2));
+	    out_one (((r & 0x3) << 6) | ((e->off >> 3) & 0x3f));
+	  }
 	  break;
 
 	case AARCH64_UOP_SAVE_REG_X:
-	  out_one (AARCH64_UOP_SAVE_REG_X);
-	  out_one ((e->info << 4) | (e->off & 0x7f));
+	  {
+	    int r = e->info - 19;
+	    out_one (AARCH64_UOP_SAVE_REG_X | ((r & 0x8) >> 3));
+	    out_one (((r & 0x7) << 5) | (((e->off >> 3) - 1) & 0x1f));
+	  }
 	  break;
 
 	case AARCH64_UOP_SAVE_REG_P:
-	  if (e->info >= 19)
-	    {
-	      int r = e->info - 19;
-	      if (r % 2 == 0 && (e->off & 7) == 0 && e->off <= 0x7F * 8)
-		{
-		  out_one (AARCH64_UOP_SAVE_REG_P | (r >> 1));
-		  out_one (e->off >> 3);
-		}
-	      else
-		{
-		  out_one (AARCH64_UOP_SAVE_REG_P);
-		  out_one ((e->info << 4) | (e->off & 0x7f));
-		}
-	    }
-	  else
-	    {
-	      out_one (AARCH64_UOP_SAVE_REG_P);
-	      out_one ((e->info << 4) | (e->off & 0x7f));
-	    }
+	  {
+	    int r = e->info - 19;
+	    out_one (AARCH64_UOP_SAVE_REG_P | ((r & 0xC) >> 2));
+	    out_one (((r & 0x3) << 6) | ((e->off >> 3) & 0x3f));
+	  }
 	  break;
 
 	case AARCH64_UOP_SAVE_REG_PX:
-	  out_one (AARCH64_UOP_SAVE_REG_PX);
-	  out_one ((e->info << 4) | (e->off & 0x7f));
+	  {
+	    int r = e->info - 19;
+	    out_one (AARCH64_UOP_SAVE_REG_PX | ((r & 0xC) >> 2));
+	    out_one (((r & 0x3) << 6) | (((e->off >> 3) - 1) & 0x3f));
+	  }
 	  break;
 
 	case AARCH64_UOP_SAVE_LRPAIR:
-	  out_one (AARCH64_UOP_SAVE_LRPAIR);
-	  out_one ((e->info << 4) | (e->off & 0x0f));
+	  {
+	    int r = e->info - 19;
+	    out_one (AARCH64_UOP_SAVE_LRPAIR | ((r & 0xC) >> 2));
+	    out_one (((r & 0x3) << 6) | ((e->off >> 3) & 0x3f));
+	  }
 	  break;
 
 	case AARCH64_UOP_SAVE_FREG:
-	  out_one (AARCH64_UOP_SAVE_FREG);
-	  out_one ((e->info << 4) | (e->off & 0x7f));
+	  {
+	    int r = e->info - 8;
+	    out_one (AARCH64_UOP_SAVE_FREG | ((r & 0x4) >> 2));
+	    out_one (((r & 0x3) << 6) | ((e->off >> 3) & 0x3f));
+	  }
 	  break;
 
 	case AARCH64_UOP_SAVE_FREG_X:
-	  out_one (AARCH64_UOP_SAVE_FREG_X);
-	  out_one ((e->info << 4) | (e->off & 0x7f));
+	  {
+	    int r = e->info - 8;
+	    out_one (AARCH64_UOP_SAVE_FREG_X);
+	    out_one (((r & 0x7) << 5) | (((e->off >> 3) - 1) & 0x1f));
+	  }
 	  break;
 
 	case AARCH64_UOP_SAVE_FREG_P:
-	  out_one (AARCH64_UOP_SAVE_FREG_P);
-	  out_one ((e->info << 4) | (e->off & 0x7f));
+	  {
+	    int r = e->info - 8;
+	    out_one (AARCH64_UOP_SAVE_FREG_P | ((r & 0x4) >> 2));
+	    out_one (((r & 0x3) << 6) | ((e->off >> 3) & 0x3f));
+	  }
 	  break;
 
 	case AARCH64_UOP_SAVE_FREG_PX:
-	  out_one (AARCH64_UOP_SAVE_FREG_PX);
-	  out_one ((e->info << 4) | (e->off & 0x7f));
+	  {
+	    int r = e->info - 8;
+	    out_one (AARCH64_UOP_SAVE_FREG_PX | ((r & 0x4) >> 2));
+	    out_one (((r & 0x3) << 6) | (((e->off >> 3) - 1) & 0x3f));
+	  }
 	  break;
 
 	case AARCH64_UOP_SET_FP:
@@ -1210,7 +1212,6 @@ static void
 seh_aarch64_write_function_xdata (seh_context *c)
 {
   int code_words, epilog_count;
-  expressionS exp;
   unsigned int func_length;
 
   /* 4-byte alignment.  */
@@ -1218,15 +1219,33 @@ seh_aarch64_write_function_xdata (seh_context *c)
 
   c->xdata_addr = symbol_temp_new_now ();
 
-  /* Calculate function length in 4-byte units.  */
-  exp.X_op = O_subtract;
-  exp.X_add_symbol = c->end_addr;
-  exp.X_op_symbol = c->start_addr;
-  exp.X_add_number = 0;
-  if (resolve_expression (&exp) && exp.X_op == O_constant)
-    func_length = exp.X_add_number >> 2;
-  else
-    func_length = 0;
+  /* Calculate function length in 4-byte units.  Compute it from the
+     symbols' fragment positions rather than resolve_expression, which
+     can fail when the symbols span multiple fragments.  */
+  {
+    addressT off1, off2;
+    fragS *f1 = symbol_get_frag_and_value (c->start_addr, &off1);
+    fragS *f2 = symbol_get_frag_and_value (c->end_addr, &off2);
+    long bytes = 0;
+
+    if (f1 == f2)
+      bytes = off2 - off1;
+    else
+      {
+	/* Sum fragment sizes from f1 to f2.  */
+	bytes = off2;
+	for (fragS *f = f1; f && f != f2; f = f->fr_next)
+	  {
+	    if (!f->fr_next)
+	      break;
+	    bytes += f->fr_fix;
+	    if (f->fr_var > 0)
+	      bytes += f->fr_var * f->fr_subtype;
+	  }
+	bytes -= off1;
+      }
+    func_length = bytes < 0 ? 0 : bytes >> 2;
+  }
 
   /* Count unwind code bytes, including the terminating END.  */
   int code_bytes = seh_aarch64_size_prologue_data (c) + 1;
@@ -1238,36 +1257,38 @@ seh_aarch64_write_function_xdata (seh_context *c)
   if (no_unwind_codes)
     code_words = 0;
 
-  /* Header word (Microsoft ARM64 SEH xdata format):
+  /* Header word (Microsoft ARM64 SEH xdata format, matching LLVM MCWin64EH):
      bits [0:17]  = Function Length / 4 (18 bits)
-     bits [18:21] = Version (4 bits, must be 0)
-     bit  [22]    = X (Extended Epilog Count)
-     bit  [23]    = E (Exception Handler Present)
-     bits [24:27] = Epilog Count (4 bits)
-     bits [28:31] = Code Words (4 bits) */
+     bit  [20]    = X (Exception Handler Present)
+     bit  [21]    = E (Packed Epilog Present)
+     bits [26:22] = Epilog Count (5 bits)
+     bits [31:27] = Code Words (5 bits) */
   epilog_count = 0;
   unsigned int header = func_length & 0x3ffff;
-  if (code_words > 0xf)
+  if (code_words > 0x1f)
     {
-      header |= (0 << 28);
-      header |= ((epilog_count & 0xf) << 24);
+      header |= (0 << 27);
+      header |= ((epilog_count & 0x1f) << 22);
     }
   else
     {
-      header |= ((code_words & 0xf) << 28);
-      header |= ((epilog_count & 0xf) << 24);
+      header |= ((code_words & 0x1f) << 27);
+      header |= ((epilog_count & 0x1f) << 22);
     }
   if (c->handler_flags & (UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER))
-    header |= (1 << 23);
+    header |= (1 << 20);
 
   out_four (header);
 
-  /* If extended code words needed, emit extension word.  */
-  if (code_words > 0xf)
+  /* If extended code words needed, emit extension word.
+     bits [15:0] = Epilog Count, bits [23:16] = Code Words.
+     Also emit it when both the code words and epilog count are zero:
+     in that case Windows (and Wine) treat the packed fields as zero and
+     read the actual values from the extension word.  */
+  if (code_words > 0x1f || no_unwind_codes)
     {
-      unsigned int ext = (code_words & 0xff)
-                         | ((epilog_count & 0xffff) << 8)
-                         | (0 << 24);
+      unsigned int ext = ((code_words & 0xff) << 16)
+                         | (epilog_count & 0xffff);
       out_four (ext);
     }
 
