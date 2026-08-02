@@ -241,15 +241,155 @@ out_four (int data)
   md_number_to_chars (p, data, 4);
 }
 
-/* Write xdata for an x64 function (passthrough to existing
-   xdata output via prologue elements).  */
+/* Count the number of slots (shorts) in the x64 unwind codes array.  */
+
+static int
+seh_x64_size_prologue_data (const seh_context *c)
+{
+  int i, ret = 0;
+
+  for (i = c->elems_count - 1; i >= 0; --i)
+    switch (c->elems[i].code)
+      {
+      case UWOP_PUSH_NONVOL:
+      case UWOP_ALLOC_SMALL:
+      case UWOP_SET_FPREG:
+      case UWOP_PUSH_MACHFRAME:
+	ret += 1;
+	break;
+
+      case UWOP_SAVE_NONVOL:
+      case UWOP_SAVE_XMM128:
+	ret += 2;
+	break;
+
+      case UWOP_SAVE_NONVOL_FAR:
+      case UWOP_SAVE_XMM128_FAR:
+	ret += 3;
+	break;
+
+      case UWOP_ALLOC_LARGE:
+	ret += (c->elems[i].info ? 3 : 2);
+	break;
+
+      default:
+	abort ();
+      }
+
+  return ret;
+}
+
+/* Write out the x64 unwind codes array.  */
 
 static void
-seh_x64_write_function_xdata (seh_context *c ATTRIBUTE_UNUSED)
+seh_x64_write_prologue_data (const seh_context *c)
 {
-  /* The x64 xdata is already emitted incrementally as prologue
-     elements are processed; this function is a no-op placeholder
-     for consistency with the aarch64 dispatch.  */
+  int i;
+
+  /* We have to store in reverse order.  */
+  for (i = c->elems_count - 1; i >= 0; --i)
+    {
+      const seh_prologue_element *e = c->elems + i;
+      expressionS exp;
+
+      /* First comes byte offset in code.  */
+      exp.X_op = O_subtract;
+      exp.X_add_symbol = e->pc_addr;
+      exp.X_op_symbol = c->start_addr;
+      exp.X_add_number = 0;
+      emit_expr (&exp, 1);
+
+      /* Second comes code+info packed into a byte.  */
+      out_one ((e->info << 4) | e->code);
+
+      switch (e->code)
+	{
+	case UWOP_PUSH_NONVOL:
+	case UWOP_ALLOC_SMALL:
+	case UWOP_SET_FPREG:
+	case UWOP_PUSH_MACHFRAME:
+	  /* These have no extra data.  */
+	  break;
+
+	case UWOP_ALLOC_LARGE:
+	  if (e->info)
+	    {
+	case UWOP_SAVE_NONVOL_FAR:
+	case UWOP_SAVE_XMM128_FAR:
+	      /* An unscaled 4 byte offset.  */
+	      out_four (e->off);
+	      break;
+	    }
+	  /* FALLTHRU */
+
+	case UWOP_SAVE_NONVOL:
+	case UWOP_SAVE_XMM128:
+	  /* A scaled 2 byte offset.  */
+	  out_two (e->off);
+	  break;
+
+	default:
+	  abort ();
+	}
+    }
+}
+
+/* Write out the xdata information for one function (x64).  */
+
+static void
+seh_x64_write_function_xdata (seh_context *c)
+{
+  int flags, count_unwind_codes;
+  expressionS exp;
+
+  /* Set 4-byte alignment.  */
+  frag_align (2, 0, 0);
+
+  c->xdata_addr = symbol_temp_new_now ();
+  flags = c->handler_flags;
+  count_unwind_codes = seh_x64_size_prologue_data (c);
+
+  /* ubyte:3 version, ubyte:5 flags.  */
+  out_one ((flags << 3) | 1);
+
+  /* Size of prologue.  */
+  if (c->endprologue_addr)
+    {
+      exp.X_op = O_subtract;
+      exp.X_add_symbol = c->endprologue_addr;
+      exp.X_op_symbol = c->start_addr;
+      exp.X_add_number = 0;
+      emit_expr (&exp, 1);
+    }
+  else
+    out_one (0);
+
+  /* Number of slots (i.e. shorts) in the unwind codes array.  */
+  if (count_unwind_codes > 255)
+    as_fatal (_("too much unwind data in this .seh_proc"));
+  out_one (count_unwind_codes);
+
+  /* ubyte:4 frame-reg, ubyte:4 frame-reg-offset.  */
+  /* Note that frameoff is already a multiple of 16, and therefore
+     the offset is already both scaled and shifted into place.  */
+  out_one (c->frameoff | c->framereg);
+
+  seh_x64_write_prologue_data (c);
+
+  /* We need to align prologue data.  */
+  if (count_unwind_codes & 1)
+    out_two (0);
+
+  if (flags & (UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER))
+    {
+      /* Force the use of segment-relative relocations instead of absolute
+         valued expressions.  Don't adjust for constants (e.g. NULL).  */
+      if (c->handler.X_op == O_symbol)
+        c->handler.X_op = O_symbol_rva;
+      emit_expr (&c->handler, 4);
+    }
+
+  /* Handler data will be tacked in here by subsections.  */
 }
 
 /* Write pdata for an ARM (WinCE-style) function (no-op stub).  */
