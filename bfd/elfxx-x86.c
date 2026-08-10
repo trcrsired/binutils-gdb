@@ -2331,6 +2331,19 @@ _bfd_x86_elf_late_size_sections (struct bfd_link_info *info)
 	      else if (p->count != 0)
 		{
 		  srel = elf_section_data (p->sec)->sreloc;
+		  if (!srel)
+		    {
+		      /* NB: Since elf_link_read_relocs_from_section
+			 aborts for bad relocation, further relocations
+			 won't be processed and needed dynamic relocation
+			 section won't be created afterwards.  */
+		      _bfd_error_handler
+			/* xgettext:c-format */
+			(_("%pB: dynamic relocation section is needed "
+			   "for section `%pA'"),
+			 p->sec->owner, p->sec);
+		      continue;
+		    }
 		  srel->size += p->count * htab->sizeof_reloc;
 		  if ((p->sec->output_section->flags & SEC_READONLY) != 0
 		      && (info->flags & DF_TEXTREL) == 0)
@@ -3422,6 +3435,37 @@ _bfd_x86_elf_link_report_error
     }
 
   bfd_set_error (bfd_error_bad_value);
+}
+
+/* Report link relocation error.  */
+
+void
+_bfd_x86_elf_link_report_relocation_error (bfd *abfd, asection *sec,
+					   const char *name,
+					   Elf_Internal_Rela *rel,
+					   reloc_howto_type *howto,
+					   bfd_reloc_status_type status)
+{
+  const char *error_msg;
+
+  switch (status)
+    {
+    case bfd_reloc_outofrange:
+      error_msg = _("out of section range");
+      break;
+
+    case bfd_reloc_notsupported:
+      error_msg = _("not supported");
+      break;
+
+    default:
+      abort ();
+    }
+
+  _bfd_error_handler
+    /* xgettext:c-format */
+    (_("%pB(%pA+%#" PRIx64 "): relocation `%s' against `%s': %s"),
+     abfd, sec, (uint64_t) rel->r_offset, howto->name, name, error_msg);
 }
 
 /* Return TRUE if symbol should be hashed in the `.gnu.hash' section.  */
