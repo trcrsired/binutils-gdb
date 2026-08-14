@@ -19,13 +19,7 @@
    Software Foundation, 51 Franklin Street - Fifth Floor, Boston, MA
    02110-1301, USA.  */
 
-#if defined (COFFAARCH64)
-#include "obj-coff-seh-aarch64.h"
-typedef struct seh_aarch64_context seh_context_t;
-#else
 #include "obj-coff-seh.h"
-typedef struct seh_context seh_context_t;
-#endif
 
 /* Private segment collection list.  */
 struct seh_seg_list {
@@ -34,7 +28,7 @@ struct seh_seg_list {
   char *seg_name;
 };
 
-static seh_context_t *seh_ctx_cur = NULL;
+static struct seh_context *seh_ctx_cur = NULL;
 
 static htab_t seh_hash;
 
