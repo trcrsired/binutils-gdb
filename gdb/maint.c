@@ -47,6 +47,10 @@
 #include "cli/cli-style.h"
 #include "cli/cli-cmds.h"
 
+#if __has_include(<sched.h>)
+#include <sched.h>
+#endif
+
 static void maintenance_do_deprecate (const char *, int);
 
 #ifndef _WIN32
@@ -882,6 +886,18 @@ update_thread_pool_size ()
 	 systems.  */
       const int max_thread_count = 8;
       n_threads = std::min (hardware_threads, max_thread_count);
+
+      if (n_threads > 1)
+	{
+	  /* Exclude unavailable hardware threads (for instance made
+	     unavailable using taskset).  */
+#if HAVE_SCHED_GETAFFINITY
+	  cpu_set_t cpus;
+	  int res = sched_getaffinity (getpid (), sizeof (cpu_set_t), &cpus);
+	  if (res == 0)
+	    n_threads = std::min (n_threads, CPU_COUNT (&cpus));
+#endif
+	}
     }
 
   gdb::thread_pool::g_thread_pool->set_thread_count (n_threads);
@@ -1214,7 +1230,8 @@ scoped_time_it::~scoped_time_it ()
 		     "user+sys %.03f, %.01f %% CPU\n",
 		     m_what, wall_ms / 1000.0, user_ms / 1000.0,
 		     sys_ms / 1000.0, user_plus_sys_ms / 1000.0,
-		     user_plus_sys_ms * 100.0 / wall_ms);
+		     (wall_ms == 0
+		      ? 0.0 : user_plus_sys_ms * 100.0 / wall_ms));
   gdb_stdlog->write_async_safe (str.data (), str.size ());
 }
 

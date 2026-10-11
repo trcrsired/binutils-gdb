@@ -3,6 +3,82 @@
 
 *** Changes since GDB 18
 
+* GDB now distinguishes between the GNU (MinGW) and MSVC Windows ABIs.
+
+  The "set osabi" command accepts two new values, "Windows-GNU" and
+  "Windows-MSVC".  The GNU ABI is for code produced by MinGW
+  toolchains, while the MSVC ABI is for code produced by Microsoft's
+  MSVC compiler (though see the PDB note below), or Clang targeting
+  one of {i686,aarch64,x86_64}-pc-windows-msvc.  The existing
+  "Windows" value continues to work and now means "let GDB pick the
+  flavor": GDB uses the configured default OS ABI (from --target) when
+  that is a Windows flavor, and otherwise assumes the GNU flavor.  For
+  example, --target=x86_64-pc-windows-msvc defaults to the MSVC ABI,
+  and --target=x86_64-w64-mingw32 defaults to GNU ABI.  Similarly for
+  the i686 and AArch64 variants.  See "New targets" entry below.
+
+  Currently, GDB is aware that "long double" differs between the two
+  ABIs.  GDB does not yet support the MSVC C++ ABI (demangling scheme,
+  C++ object layout, etc.) or PDB debug information.
+
+* GDB can now read OS-generated core files on systems with Intel AMX
+  support.  The AMX registers themselves are not yet readable, but
+  other xsave state can be read.
+
+* There have been changes to how inferior arguments are passed to
+  remote targets.  When using the latest GDB and gdbserver the new
+  single-inf-arg feature will be used for argument passing.  When
+  using remote targets that don't support single-inf-arg, GDB will now
+  escape special shell characters (except for whitespace and quotes)
+  within arguments before passing them to the remote target.  Remote
+  targets will need updating to take this into account.
+
+* GDB now supports source-tracking breakpoints, which automatically
+  adjust their location when source code changes between rebuilds.
+  When enabled, file and line breakpoints capture the surrounding
+  source code context and use it to adjust the breakpoint line if the
+  source is modified.  Source tracking can be enabled with 'set
+  breakpoint source-tracking enabled on'.
+
+* New targets
+
+i386 Windows/MSVC               i[34567]86-*-windows-msvc
+
+amd64 Windows/MSVC              x86_64-*-windows-msvc
+
+AArch64 Windows/MSVC            aarch64-*-windows-msvc
+
+* New commands
+
+set print shadowed on|off
+show print shadowed
+  This controls the output of the "info locals" command.  If the option is
+  "off", shadowed variables will be omitted from the output.  The default is
+  to print shadowed variables.
+
+set breakpoint source-tracking enabled [on|off]
+show breakpoint source-tracking enabled
+  Enable or disable source-tracking for file and line breakpoints.
+  When enabled, breakpoints capture surrounding source code and
+  automatically adjust their location when the source changes between
+  recompilations.
+
+maintenance info source-tracking-context BPNUM
+  Displays the captured source context that GDB uses to track and
+  adjust a breakpoint when source changes.
+
+* Changed commands
+
+set stop-on-solib-events on|off
+show stop-on-solib-events
+  This setting is now a boolean.  Previously, it was an integer, where
+  any non-zero value meant "on".  The values 0 and 1 are still
+  accepted.
+
+info locals
+  The new "-shadowed on|off" option overrides the "set print shadowed"
+  setting for a single invocation of the command.
+
 *** Changes in GDB 18
 
 * Support for the Common Trace Format (CTF) has been removed.  GDB now
@@ -5812,7 +5888,7 @@ Renesas RL78				rl78-*-elf
      This keyword, when provided, will direct the output to either
      stdout, stderr, or GDB's logging output.
 
-  ** Parameters can now be be sub-classed in Python, and in particular
+  ** Parameters can now be sub-classed in Python, and in particular
      you may implement the get_set_doc and get_show_doc functions.
      This improves how Parameter set/show documentation is processed
      and allows for more dynamic content.

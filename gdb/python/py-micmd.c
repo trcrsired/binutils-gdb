@@ -207,7 +207,7 @@ mi_command_py::invoke (struct mi_parse *parse) const
   gdb_assert (this->m_pyobj != nullptr);
   gdb_assert (PyErr_Occurred () == nullptr);
   gdbpy_ref<> results
-    (PyObject_CallMethodObjArgs ((PyObject *) this->m_pyobj.get (), invoke_cst,
+    (PyObject_CallMethodObjArgs (this->m_pyobj.get (), invoke_cst,
 				 argobj.get (), nullptr));
   if (results == nullptr)
     gdbpy_handle_exception ();
@@ -528,7 +528,7 @@ micmdpy_set_installed (PyObject *self, PyObject *newvalue, void *closure)
     return micmdpy_uninstall_command (micmd_obj);
 }
 
-/* The gdb.MICommand properties.   */
+/* The gdb.MICommand properties.  */
 
 static gdb_PyGetSetDef micmdpy_object_getset[] = {
   { "name", micmdpy_get_name, nullptr, "The command's name.", nullptr },

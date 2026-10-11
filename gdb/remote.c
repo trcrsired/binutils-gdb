@@ -1035,8 +1035,6 @@ public:
 
   const char *extra_thread_info (struct thread_info *) override;
 
-  ptid_t get_ada_task_ptid (long lwp, ULONGEST thread) override;
-
   thread_info *thread_handle_to_thread_info (const gdb_byte *thread_handle,
 					     int handle_len,
 					     inferior *inf) override;
@@ -4737,15 +4735,6 @@ remote_target::static_tracepoint_markers_by_strid (const char *strid)
 }
 
 
-/* Implement the to_get_ada_task_ptid function for the remote targets.  */
-
-ptid_t
-remote_target::get_ada_task_ptid (long lwp, ULONGEST thread)
-{
-  return ptid_t (inferior_ptid.pid (), lwp);
-}
-
-
 /* Restart the remote side; this is an extended protocol operation.  */
 
 void
@@ -5350,7 +5339,7 @@ get_semicolon_delimited_hex_as_string (const char **ptr)
   return str;
 }
 
-/* See declaration in class above.   */
+/* See declaration in class above.  */
 
 remote_exec_and_args_info
 remote_target::fetch_remote_executable_and_arguments ()
@@ -5761,7 +5750,7 @@ remote_target::start_remote_1 (int from_tty, int extended_p)
       /* Need to switch to a specific thread, because remote_check_symbols
 	 uses INFERIOR_PTID to set the general thread.  */
       scoped_restore_current_thread restore_thread;
-      thread_info *thread = any_thread_of_inferior (inf);
+      thread_info *thread = any_non_exited_thread_of_inferior (inf);
       switch_to_thread (thread);
       this->remote_check_symbols ();
     }
@@ -6748,7 +6737,7 @@ thread_pending_fork_status (struct thread_info *thread)
   return &ws;
 }
 
-/* Return THREAD's pending status if is is a pending fork/vfork/clone
+/* Return THREAD's pending status if is a pending fork/vfork/clone
    event, else return nullptr.  */
 
 static const target_waitstatus *
@@ -7883,6 +7872,10 @@ remote_target::remote_stop_ns (ptid_t ptid)
 	    remote_thr->set_resumed ();
 	  }
       }
+
+  /* Skip 'vCont' packet if there are no threads to be stopped.  */
+  if (all_non_exited_threads (this, ptid).empty ())
+    return;
 
   if (!rs->supports_vCont.t)
     error (_("Remote server does not support stopping threads"));
@@ -10822,7 +10815,7 @@ show_watchdog (struct ui_file *file, int from_tty,
 /* Read a packet from the remote machine, with error checking, and
    store it in *BUF.  Resize *BUF if necessary to hold the result.  If
    FOREVER, wait forever rather than timing out; this is used (in
-   synchronous mode) to wait for a target that is is executing user
+   synchronous mode) to wait for a target that is executing user
    code to stop.  If FOREVER == false, this function is allowed to time
    out gracefully and return an indication of this to the caller.
    Otherwise return the number of bytes read.  If IS_NOTIF is not
@@ -16175,7 +16168,7 @@ remote_objfile_changed_check_symbols (program_space *pspace)
 	 called very early in the connection process, while the inferior is
 	 being set up, before threads are added.  Just skip it, start_remote_1
 	 also calls remote_check_symbols when it's done setting things up.  */
-      thread_info *thread = any_thread_of_inferior (inf);
+      thread_info *thread = any_non_exited_thread_of_inferior (inf);
       if (thread != nullptr)
 	{
 	  scoped_restore_current_thread restore_thread;
@@ -16631,7 +16624,7 @@ test_memory_tagging_functions ()
   /* On the previous tests, qIsAddressTagged packet was auto detected and set
      as supported.  But an empty reply means the packet is unsupported, so for
      testing the empty reply the support is reset to unknown state, otherwise
-     packet_ok will complain.   */
+     packet_ok will complain.  */
   remote.m_features.m_protocol_packets[PACKET_qIsAddressTagged].support =
     PACKET_SUPPORT_UNKNOWN;
   SELF_CHECK (check_is_address_tagged_reply (&remote, packet, is_tagged) ==

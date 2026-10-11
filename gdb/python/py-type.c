@@ -91,7 +91,7 @@ field_dealloc (PyObject *obj)
   Py_TYPE (obj)->tp_free (obj);
 }
 
-static PyObject *
+static gdbpy_ref<>
 field_new (void)
 {
   gdbpy_ref<field_object> result (PyObject_New (field_object,
@@ -100,7 +100,7 @@ field_new (void)
   if (result != nullptr && !result->allocate_dict ())
     return nullptr;
 
-  return (PyObject *) result.release ();
+  return result;
 }
 
 
@@ -925,7 +925,7 @@ typy_legacy_template_argument (struct type *type, const struct block *block,
 {
   int i;
   struct demangle_component *demangled;
-  std::unique_ptr<demangle_parse_info> info;
+  demangle_parse_info_up info;
   std::string err;
   struct type *argtype;
 
@@ -1347,7 +1347,7 @@ typy_make_iter (PyObject *self, enum gdbpy_iter_kind kind)
   Py_INCREF (self);
   typy_iter_obj->source = (type_object *) self;
 
-  return (PyObject *) typy_iter_obj;
+  return typy_iter_obj;
 }
 
 /* iteritems() method.  */

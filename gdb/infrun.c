@@ -413,9 +413,9 @@ get_detach_signal (process_stratum_target *proc_target, ptid_t ptid)
 
 static struct cmd_list_element *stop_command;
 
-/* Nonzero if we want to give control to the user when we're notified
-   of shared library events by the dynamic linker.  */
-int stop_on_solib_events;
+/* See infrun.h.  */
+
+bool stop_on_solib_events;
 
 /* Enable or disable optional shared library event breakpoints
    as appropriate when the above flag is changed.  */
@@ -699,7 +699,8 @@ holding the child stopped.  Try \"set %ps\" or \"%ps\".\n"),
   target_follow_fork (child_inf, child_ptid, fork_kind, follow_child,
 		      detach_fork);
 
-  gdb::observers::inferior_forked.notify (parent_inf, child_inf, fork_kind);
+  gdb::observers::inferior_forked.notify (parent_inf, child_inf, fork_kind,
+					  detach_fork, follow_child);
 
   /* target_follow_fork must leave the parent as the current inferior.  If we
      want to follow the child, we make it the current one below.  */
@@ -1377,7 +1378,7 @@ follow_exec (ptid_t ptid, const char *exec_file_target)
      we don't want those to be satisfied by the libraries of the
      previous incarnation of this process.  */
   no_shared_libraries (current_program_space);
-  current_program_space->unset_solib_ops ();
+  current_program_space->clear_solib_ops ();
 
   inferior *execing_inferior = current_inferior ();
   inferior *following_inferior;
@@ -1434,7 +1435,7 @@ follow_exec (ptid_t ptid, const char *exec_file_target)
      registers.  */
   target_find_description ();
 
-  following_inferior->pspace->set_solib_ops
+  following_inferior->pspace->add_solib_ops
     (gdbarch_make_solib_ops (following_inferior->arch (),
 			     following_inferior->pspace));
   gdb::observers::inferior_execd.notify (execing_inferior, following_inferior);
@@ -1718,7 +1719,7 @@ infrun_inferior_execd (inferior *exec_inf, inferior *follow_inf)
 {
   /* If some threads where was doing a displaced step in this inferior at the
      moment of the exec, they no longer exist.  Even if the exec'ing thread
-     doing a displaced step, we don't want to to any fixup nor restore displaced
+     doing a displaced step, we don't want to do any fixup nor restore displaced
      stepping buffer bytes.  */
   follow_inf->displaced_step_state.reset ();
 
@@ -6331,7 +6332,9 @@ handle_inferior_event (struct execution_control_state *ecs)
      stack.  */
   if (ecs->ws.kind () == TARGET_WAITKIND_STOPPED
       && (ecs->ws.sig () == GDB_SIGNAL_ILL
-	  || ecs->ws.sig () == GDB_SIGNAL_SEGV
+	  || (ecs->ws.sig () == GDB_SIGNAL_SEGV
+	      && !(gdbarch_imprecise_pagefault_reporting
+		   (target_thread_architecture (ecs->event_thread->ptid))))
 	  || ecs->ws.sig () == GDB_SIGNAL_EMT))
     {
       struct regcache *regcache = get_thread_regcache (ecs->event_thread);
@@ -8431,7 +8434,7 @@ process_event_stop_test (struct execution_control_state *ecs)
      which includes things like the line number we are stepping away from.
      This means we will stop when we find a line table entry that is marked
      as is-statement, even if it matches the non-statement one we just
-     stepped into.   */
+     stepped into.  */
 
   ecs->event_thread->control.step_range_start = stop_pc_sal.pc;
   ecs->event_thread->control.step_range_end = stop_pc_sal.end;
@@ -10843,16 +10846,16 @@ leave it stopped or free to run as needed."),
   /* Update cached state.  */
   signal_cache_update (-1);
 
-  add_setshow_zinteger_cmd ("stop-on-solib-events", class_support,
-			    &stop_on_solib_events, _("\
+  add_setshow_boolean_cmd ("stop-on-solib-events", class_support,
+			   &stop_on_solib_events, _("\
 Set stopping for shared library events."), _("\
 Show stopping for shared library events."), _("\
-If nonzero, gdb will give control to the user when the dynamic linker\n\
+If on, gdb will give control to the user when the dynamic linker\n\
 notifies gdb of shared library events.  The most common event of interest\n\
 to the user would be loading/unloading of a new library."),
-			    set_stop_on_solib_events,
-			    show_stop_on_solib_events,
-			    &setlist, &showlist);
+			   set_stop_on_solib_events,
+			   show_stop_on_solib_events,
+			   &setlist, &showlist);
 
   add_setshow_enum_cmd ("follow-fork-mode", class_run,
 			follow_fork_mode_kind_names,

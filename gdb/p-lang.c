@@ -28,6 +28,7 @@
 #include "language.h"
 #include "varobj.h"
 #include "p-lang.h"
+#include "p-exp-parser.h"
 #include "valprint.h"
 #include "value.h"
 #include "c-lang.h"
@@ -162,6 +163,14 @@ public:
 
 /* See language.h.  */
 
+int
+pascal_language::parser (struct parser_state *ps) const
+{
+  return pascal_parse (ps);
+}
+
+/* See language.h.  */
+
 void
 pascal_language::printchar (int c, struct type *type,
 			    struct ui_file *stream) const
@@ -212,7 +221,7 @@ void
 pascal_language::printstr (struct ui_file *stream, struct type *elttype,
 			   const gdb_byte *string, unsigned int length,
 			   const char *encoding, int force_ellipses,
-			   const struct value_print_options *options) const
+			   const value_print_options &options) const
 {
   pascal_wchar_printer printer (elttype, '\'', encoding);
   printer.print (stream, string, length, force_ellipses, 0, options);

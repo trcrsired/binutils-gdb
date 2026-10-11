@@ -85,7 +85,7 @@ responsibility among the other maintainers.
   FR30		   Nick Clifton <nickc@redhat.com>
   FRV		   Nick Clifton <nickc@redhat.com>
   FRV		   Alexandre Oliva <aoliva@sourceware.org>
-  GOLD		   Ian Lance Taylor <iant@google.com>
+  GOLD		   Ian Lance Taylor <ian@airs.com>
   GOLD		   Cary Coutant <ccoutant@gmail.com>
   gprofng	   Claudiu Zissulescu <claziss@gmail.com>
   gprofng	   Jose E. Marchesi <jemarch@gnu.org>
@@ -125,6 +125,7 @@ responsibility among the other maintainers.
   RISC-V	   Andrew Waterman <andrew@sifive.com>
   RISC-V	   Jim Wilson <jim.wilson.gcc@gmail.com>
   RISC-V	   Nelson Chu <nelson.chu@sifive.com>
+  RISC-V	   Kito Cheng <kito.cheng@sifive.com>
   RX               Nick Clifton <nickc@redhat.com>
   S12Z		   John Darrington <john@darrington.wattle.id.au>
   s390, s390x	   Andreas Krebbel <krebbel@linux.ibm.com>
@@ -133,7 +134,6 @@ responsibility among the other maintainers.
   SPARC		   Jose E. Marchesi <jose.marchesi@oracle.com>
   SPU		   Alan Modra <amodra@gmail.com>
   TIC54X           Timothy Wall <twall@alum.mit.edu>
-  TIC6X            Joseph Myers <josmyers@redhat.com>
   VAX		   Jan-Benedict Glaw <jbglaw@lug-owl.de>
   Visium	   Eric Botcazou <ebotcazou@libertysurf.fr>
   VMS		   Tristan Gingold <tgingold@free.fr>

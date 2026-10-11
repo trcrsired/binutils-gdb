@@ -210,9 +210,8 @@ unwind_infopy_str (PyObject *self)
   stb.printf ("Frame ID: %s", unwind_info->frame_id.to_string ().c_str ());
   {
     const char *sep = "";
-    struct value_print_options opts;
 
-    get_user_print_options (&opts);
+    const value_print_options &opts = get_user_print_options ();
     stb.printf ("\nSaved registers: (");
     for (const saved_reg &reg : *unwind_info->saved_regs)
       {
@@ -223,7 +222,7 @@ unwind_infopy_str (PyObject *self)
 	  {
 	    try
 	      {
-		value_print (value, &stb, &opts);
+		value_print (value, &stb, opts);
 		stb.puts (")");
 	      }
 	    catch (const gdb_exception &except)
@@ -294,7 +293,7 @@ pyuw_create_unwind_info (PyObject *pyo_pending_frame,
   Py_INCREF (pyo_pending_frame);
   unwind_info->pending_frame = pyo_pending_frame;
   unwind_info->saved_regs = new std::vector<saved_reg>;
-  return (PyObject *) unwind_info;
+  return unwind_info;
 }
 
 /* The implementation of
@@ -864,10 +863,9 @@ frame_unwind_python::sniff (const frame_info_ptr &this_frame,
 		     paddress (gdbarch, get_frame_pc (this_frame)));
 
   /* Create PendingFrame instance to pass to sniffers.  */
-  pending_frame_object *pfo = PyObject_New (pending_frame_object,
-					    &pending_frame_object_type);
-  gdbpy_ref<> pyo_pending_frame ((PyObject *) pfo);
-  if (pyo_pending_frame == NULL)
+  gdbpy_ref<pending_frame_object> pfo
+    (PyObject_New (pending_frame_object, &pending_frame_object_type));
+  if (pfo == NULL)
     {
       gdbpy_print_stack ();
       return 0;
@@ -900,8 +898,7 @@ frame_unwind_python::sniff (const frame_info_ptr &this_frame,
 
   /* A (gdb.UnwindInfo, str) tuple, or None.  */
   gdbpy_ref<> pyo_execute_ret
-    (PyObject_CallFunctionObjArgs (pyo_execute.get (),
-				   pyo_pending_frame.get (), NULL));
+    = gdbpy_object_call_function_obj_args (pyo_execute, pfo);
   if (pyo_execute_ret == nullptr)
     {
       /* If the unwinder is cancelled due to a Ctrl-C, then propagate

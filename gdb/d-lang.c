@@ -21,6 +21,7 @@
 #include "language.h"
 #include "varobj.h"
 #include "d-lang.h"
+#include "d-exp-parser.h"
 #include "c-lang.h"
 #include "demangle.h"
 #include "cp-support.h"
@@ -160,7 +161,7 @@ public:
 
   void value_print_inner
 	(struct value *val, struct ui_file *stream, int recurse,
-	 const struct value_print_options *options) const override
+	 const value_print_options &options) const override
   {
     return d_value_print_inner (val, stream, recurse, options);
   }

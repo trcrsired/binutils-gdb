@@ -235,12 +235,10 @@ struct loclists_rnglists_header
   short version;
 
   /* A 1-byte unsigned integer containing the size in bytes of an address on
-     the target system.  */
-  unsigned char addr_size;
+     the target system.
 
-  /* A 1-byte unsigned integer containing the size in bytes of a segment selector
-     on the target system.  */
-  unsigned char segment_collector_size;
+     Contains one of the values accepted by dwarf2_addr_size_is_supported.  */
+  unsigned char addr_size;
 
   /* A 4-byte count of the number of offsets that follow the header.  */
   unsigned int offset_entry_count;
@@ -523,7 +521,7 @@ static void var_decode_location (struct attribute *attr,
 static unsigned int peek_abbrev_code (bfd *, const gdb_byte *);
 
 static unrelocated_addr read_addr_index (struct dwarf2_cu *cu,
-					 unsigned int addr_index);
+					 ULONGEST addr_index);
 
 static const char *read_indirect_string (dwarf2_per_objfile *per_objfile, bfd *,
 					 const gdb_byte *, const unit_head *,
@@ -3770,15 +3768,16 @@ process_queue (dwarf2_per_objfile *per_objfile)
       if (signatured_type *sig_type = per_cu->as_signatured_type ();
 	  sig_type != nullptr)
 	{
-	  sprintf (buf, "TU %s at offset %s", hex_string (sig_type->signature),
-		   sect_offset_str (per_cu->sect_off ()));
+	  xsnprintf (buf, sizeof (buf), "TU %s at offset %s",
+		     hex_string (sig_type->signature),
+		     sect_offset_str (per_cu->sect_off ()));
 	  /* There can be 100s of TUs.  Only print them in verbose mode.  */
 	  debug_print_threshold = 2;
 	}
       else
 	{
-	  sprintf (buf, "CU at offset %s",
-		   sect_offset_str (per_cu->sect_off ()));
+	  xsnprintf (buf, sizeof (buf), "CU at offset %s",
+		     sect_offset_str (per_cu->sect_off ()));
 	  debug_print_threshold = 1;
 	}
 
@@ -5119,8 +5118,6 @@ dwarf2_compute_name (const char *name,
 		    cu->language_defn->printchar (value, type, &buf);
 		  else
 		    {
-		      struct value_print_options opts;
-
 		      if (baton != NULL)
 			v = dwarf2_evaluate_loc_desc (type, NULL,
 						      baton->expr (),
@@ -5137,9 +5134,10 @@ dwarf2_compute_name (const char *name,
 
 		      /* Specify decimal so that we do not depend on
 			 the radix.  */
-		      get_formatted_print_options (&opts, 'd');
+		      value_print_options opts
+			= get_formatted_print_options ('d');
 		      opts.raw = true;
-		      value_print (v, &buf, &opts);
+		      value_print (v, &buf, opts);
 		      release_value (v);
 		    }
 		}
@@ -6219,7 +6217,7 @@ create_dwp_hash_table (dwarf2_per_bfd *per_bfd, struct dwp_file *dwp_file,
 
   /* For Version 5, the version is really 2 bytes of data & 2 bytes of padding.
      For now it's safe to just read 4 bytes (particularly as it's difficult to
-     tell if you're dealing with Version 5 before you've read the version).   */
+     tell if you're dealing with Version 5 before you've read the version).  */
   version = read_4_bytes (dbfd, index_ptr);
   index_ptr += 4;
   if (version != 2 && version != 5)
@@ -10864,8 +10862,8 @@ die_byte_order (die_info *die, dwarf2_cu *cu, enum bfd_endian *byte_order)
    children.  In particular, the fields are computed.  If IS_UNSIGNED
    is set, the enumeration type's sign is already known (a true value
    means unsigned), and so examining the constants to determine the
-   sign isn't needed; when this is unset, the enumerator constants are
-   read as signed values.  */
+   sign isn't needed; when this is unset, the sign is deduced from the
+   constants.  */
 
 static void
 update_enumeration_type_from_children (struct die_info *die,
@@ -10904,9 +10902,10 @@ update_enumeration_type_from_children (struct die_info *die,
 	value = attr->unsigned_constant ().value_or (0);
       else
 	{
-	  /* Read as signed, either because we don't know the sign or
-	     because we know it is definitely signed.  */
-	  value = attr->signed_constant ().value_or (0);
+	  /* The known producers describe negative values using DW_FORM_sdata
+	     and the non-negative values using either DW_FORM_udata or
+	     DW_FORM_data<n>.  */
+	  value = attr->confused_constant ().value_or (0);
 
 	  if (value < 0)
 	    {
@@ -10988,8 +10987,8 @@ read_enumeration_type (struct die_info *die, struct dwarf2_cu *cu)
     type->set_is_stub (true);
 
   /* If the underlying type is known, and is unsigned, then we'll
-     assume the enumerator constants are unsigned.  Otherwise we have
-     to assume they are signed.  */
+     assume the enumerator constants are unsigned.  Otherwise, it will
+     depend on the form.  */
   std::optional<bool> is_unsigned;
 
   /* If this type has an underlying type that is not a stub, then we
@@ -14090,7 +14089,14 @@ read_loclists_rnglists_header (struct loclists_rnglists_header *header,
   header->addr_size = read_1_byte (abfd, info_ptr);
   info_ptr += 1;
 
-  header->segment_collector_size = read_1_byte (abfd, info_ptr);
+  if (!dwarf2_addr_size_is_supported (header->addr_size))
+    error (_(DWARF_ERROR_PREFIX
+	     "unsupported address size in %s header "
+	     "(is %u, should be 2, 4 or 8) [in module %s]"),
+	   section->get_name (), header->addr_size,
+	   section->get_file_name ());
+
+  /* Skip segment_selector_size.  */
   info_ptr += 1;
 
   header->offset_entry_count = read_4_bytes (abfd, info_ptr);
@@ -14650,35 +14656,44 @@ dwarf2_per_objfile::read_line_string (const gdb_byte *buf,
    ADDR_SIZE is the size of addresses from the CU header.  */
 
 static unrelocated_addr
-read_addr_index_1 (dwarf2_per_objfile *per_objfile, unsigned int addr_index,
+read_addr_index_1 (dwarf2_per_objfile *per_objfile, ULONGEST addr_index,
 		   std::optional<ULONGEST> addr_base, int addr_size)
 {
   struct objfile *objfile = per_objfile->objfile;
-  bfd *abfd = objfile->obfd.get ();
-  const gdb_byte *info_ptr;
+  dwarf2_per_bfd *per_bfd = per_objfile->per_bfd;
   ULONGEST addr_base_or_zero = addr_base.has_value () ? *addr_base : 0;
 
-  per_objfile->per_bfd->addr.read (objfile);
-  if (per_objfile->per_bfd->addr.buffer == NULL)
+  per_bfd->addr.read (objfile);
+  if (per_bfd->addr.buffer == NULL)
     error (_("DW_FORM_addr_index used without .debug_addr section [in module %s]"),
 	   objfile_name (objfile));
-  if (addr_base_or_zero + addr_index * addr_size
-      >= per_objfile->per_bfd->addr.size)
-    error (_("DW_FORM_addr_index pointing outside of "
-	     ".debug_addr section [in module %s]"),
+
+  /* Check that the DW_AT_addr_base value makes sense.  */
+  if (addr_base_or_zero > per_bfd->addr.size)
+    error (_("DW_AT_addr_base points outside of .debug_addr section "
+	     "[in module %s]"),
 	   objfile_name (objfile));
-  info_ptr = (per_objfile->per_bfd->addr.buffer + addr_base_or_zero
-	      + addr_index * addr_size);
-  if (addr_size == 4)
-    return (unrelocated_addr) bfd_get_32 (abfd, info_ptr);
-  else
-    return (unrelocated_addr) bfd_get_64 (abfd, info_ptr);
+
+  ULONGEST bytes_avail = per_bfd->addr.size - addr_base_or_zero;
+  ULONGEST entry_offset = addr_index * addr_size;
+
+  /* Check that the whole entry fits inside the section.  */
+  if (entry_offset + addr_size > bytes_avail)
+    error (_("DW_FORM_addr_index points outside of .debug_addr section "
+	     "[in module %s]"),
+	   objfile_name (objfile));
+
+  const gdb_byte *addr_ptr
+    = per_bfd->addr.buffer + addr_base_or_zero + entry_offset;
+
+  return (unrelocated_addr) extract_unsigned_integer (addr_ptr, addr_size,
+						      per_bfd->byte_order ());
 }
 
 /* Given index ADDR_INDEX in .debug_addr, fetch the value.  */
 
 static unrelocated_addr
-read_addr_index (struct dwarf2_cu *cu, unsigned int addr_index)
+read_addr_index (struct dwarf2_cu *cu, ULONGEST addr_index)
 {
   return read_addr_index_1 (cu->per_objfile, addr_index,
 			    cu->addr_base, cu->header.addr_size);
@@ -14691,7 +14706,7 @@ read_addr_index_from_leb128 (struct dwarf2_cu *cu, const gdb_byte *info_ptr,
 			     unsigned int *bytes_read)
 {
   bfd *abfd = cu->per_objfile->objfile->obfd.get ();
-  unsigned int addr_index = read_unsigned_leb128 (abfd, info_ptr, bytes_read);
+  ULONGEST addr_index = read_unsigned_leb128 (abfd, info_ptr, bytes_read);
 
   return read_addr_index (cu, addr_index);
 }
@@ -14700,7 +14715,7 @@ read_addr_index_from_leb128 (struct dwarf2_cu *cu, const gdb_byte *info_ptr,
 
 unrelocated_addr
 dwarf2_read_addr_index (dwarf2_per_cu *per_cu, dwarf2_per_objfile *per_objfile,
-			unsigned int addr_index)
+			ULONGEST addr_index)
 {
   struct dwarf2_cu *cu = per_objfile->get_cu (per_cu);
   std::optional<ULONGEST> addr_base;

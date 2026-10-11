@@ -3827,7 +3827,7 @@ program information from the perspective of the current thread.
 
 @cindex @code{New} @var{systag} message
 @cindex thread identifier (system)
-@c FIXME-implementors!! It would be more helpful if the [New...] message
+@c FIXME-implementers!! It would be more helpful if the [New...] message
 @c included GDB's numeric thread handle, so you could just go to that
 @c thread without first checking `info threads'.
 Whenever @value{GDBN} detects a new thread in your program, it displays
@@ -4660,6 +4660,29 @@ program.
 
 On some systems, you can set breakpoints in shared libraries before
 the executable is run.
+
+@cindex source-tracking breakpoints
+@cindex breakpoints, automatic adjustment when source changes
+@value{GDBN} supports @dfn{source-tracking breakpoints}, which
+automatically adjust their location when source code changes between
+recompilations.  When enabled with @kbd{set breakpoint source-tracking
+enabled on}, breakpoints set by file and line number capture a small
+window of surrounding source lines centered on the breakpoint line.
+If the source file is modified and the executable is rebuilt,
+@value{GDBN} searches a window of approximately 12 lines centered on the
+breakpoint's original position for the best match.  For each candidate
+line that matches the original breakpoint line, @value{GDBN} compares
+all captured context lines at their corresponding offsets and scores the
+match by how many lines agree.  The candidate with the highest score is
+selected, provided a majority of the context lines match, reducing false
+positives from short or repeated lines.  If no match meets the threshold,
+@value{GDBN} issues a warning and keeps the breakpoint at its original
+location, disabling source tracking for that breakpoint.  Note that
+breakpoints set by function name or address are not affected by source
+tracking.  Source tracking requires that source files be accessible and
+that the executable contain line-number debug information.
+
+@xref{Set Breaks}.
 
 @cindex watchpoints
 @cindex data breakpoints
@@ -6440,7 +6463,7 @@ from assembly, C and C@t{++} languages@footnote{See
 @uref{http://sourceware.org/systemtap/wiki/UserSpaceProbeImplementation}
 for a good reference on how the @acronym{SDT} probes are implemented.}.
 
-@item @code{DTrace} (@uref{http://oss.oracle.com/projects/DTrace})
+@item @code{DTrace} (@uref{https://docs.oracle.com/en/operating-systems/oracle-linux/dtrace-guide/})
 @acronym{USDT} probes.  @code{DTrace} probes are usable from C and
 C@t{++} languages.
 @end itemize
@@ -9178,7 +9201,7 @@ If both @var{regexp} and @var{type_regexp} are provided, an argument
 is printed only if its name matches @var{regexp} and its type matches
 @var{type_regexp}.
 
-@item info locals [-q]
+@item info locals [-q] [-shadowed [on|off]]
 @kindex info locals
 Print the local variables of the selected frame, each on a separate
 line.  These are all variables (declared either static or automatic)
@@ -9187,6 +9210,9 @@ accessible at the point of execution of the selected frame.
 The optional flag @samp{-q}, which stands for @samp{quiet}, disables
 printing header information and messages explaining why no local variables
 have been printed.
+
+The optional argument @samp{-shadowed} overrides the @code{set print shadowed}
+setting (@pxref{set print shadowed}) for this invocation of the command.
 
 @smallexample
 @group
@@ -9202,6 +9228,7 @@ have been printed.
 x = 4	<file.c:3>
 y = 52
 x = 3	<file.c:1, shadowed>
+Use "set print shadowed off" to hide shadowed variables.
 @end group
 @end smallexample
 
@@ -9212,7 +9239,8 @@ same name which is declared within an inner scope (decision block,
 method, or inner class).  When shadowing is detected, location
 information is added to all instances of the shadowed variable name.
 The outermost instances are additionally followed by @samp{shadowed}
-to indicate that they are not the active variable.
+to indicate that they are not the active variable.  Printing shadowed
+variables can be controlled by @ref{set print shadowed}.
 
 @item info locals [-q] [-t @var{type_regexp}] [@var{regexp}]
 Like @kbd{info locals}, but only print the local variables selected
@@ -12829,6 +12857,19 @@ Do not pretty print C@t{++} virtual function tables.
 
 @item show print vtbl
 Show whether C@t{++} virtual function tables are pretty printed, or not.
+
+@anchor{set print shadowed}
+@item set print shadowed
+@itemx set print shadowed on
+@cindex printing shadowed variables
+Print variables that are shadowed by a declaration in an inner scope
+(@pxref{shadowed variables}).  The default is on.
+
+@item set print shadowed off
+Do not print shadowed variables.
+
+@item show print shadowed
+Show whether shadowed variables are printed or not.
 @end table
 
 @node Pretty Printing
@@ -22492,7 +22533,7 @@ The surrounding square brackets are optional.
 @end table
 
 @table @code
-@item set stop-on-solib-events
+@item set stop-on-solib-events @r{[}on@r{|}off@r{]}
 @kindex set stop-on-solib-events
 This command controls whether @value{GDBN} should give you control
 when the dynamic linker notifies it about some shared library event.
@@ -27292,6 +27333,40 @@ For more information about @acronym{FPMR}, please refer to the official
 @uref{https://developer.arm.com/documentation/ddi0601/latest,ignored,
 architecture registers documentation}.
 
+@subsubsection AArch64 Permission Overlay Extension
+@cindex Permission Overlay Extension, AArch64
+@cindex POE, AArch64
+
+When @value{GDBN} is debugging an AArch64 target and the Permission Overlay
+Extension (@acronym{POE}) is available, @value{GDBN} will make the
+@code{por_el0} register available.
+
+To aid debugging, @value{GDBN} interprets the permissions of each field in
+@code{por_el0} when displaying it with the @code{info registers} command.
+
+@smallexample
+(gdb) info registers por_el0
+por_el0 0x0000000000000007 [ P0=rwx ]
+@end smallexample
+
+@value{GDBN} also provides pseudo-registers named @code{por_p0} through
+@code{por_p15} for accessing the individual permission fields in
+@code{por_el0}. These pseudo-registers can be read and written independently.
+Writing a pseudo-register updates the corresponding 4-bit field in
+@code{por_el0}.
+
+@smallexample
+(gdb) set $por_el0 = 0x7
+(gdb) set $por_p1 = 0x7
+(gdb) info registers por_el0
+por_el0		0x0000000000000077	[ P1=rwx P0=rwx ]
+(gdb) info registers por_p1
+por_p1		0x7			rwx
+@end smallexample
+
+The @code{info registers por} command can be used to display @code{por_el0} and
+all the POE pseudo-registers.
+
 @node x86
 @subsection x86
 
@@ -28705,6 +28780,15 @@ When @value{GDBN} is debugging the AArch64 architecture, it provides a
 ``Newlib'' OS ABI.  This is useful for handling @code{setjmp} and
 @code{longjmp} when debugging binaries that use the @sc{newlib} C library.
 The ``Newlib'' OS ABI can be selected by @code{set osabi Newlib}.
+
+On Windows, the GNU (MinGW) and MSVC toolchains use different ABIs.
+For example, they disagree on the size of @code{long double}.
+@value{GDBN} provides a separate OS ABI for each: ``Windows-GNU'' and
+``Windows-MSVC''.  A generic ``Windows'' OS ABI is also available.  It
+does not select a flavor directly, but asks @value{GDBN} to pick one:
+@value{GDBN} uses the OS ABI it was configured with by default (from
+the @code{--target} configure option) when that is a Windows flavor,
+and otherwise assumes the GNU flavor.  @xref{Configure Options}.
 
 @table @code
 @item show osabi
@@ -42065,6 +42149,13 @@ Shared library events.
 
 @end table
 
+@kindex maint info source-tracking-context
+@item maint info source-tracking-context @var{num}
+For source-tracking breakpoints (@pxref{Breakpoints}), print the
+tracked source code context for breakpoint @var{num}.  If breakpoint
+@var{num} is not source tracked, or @var{num} is not a valid
+breakpoint number, then the command gives an error.
+
 @kindex maint info btrace
 @item maint info btrace
 Pint information about raw branch tracing data.
@@ -42932,6 +43023,22 @@ triggers a hardware-assisted breakpoint or watchpoint.
 Control whether to show all non zero areas within a 1k block starting
 at thread local base, when using the @samp{info w32 thread-information-block}
 command.
+
+@kindex set breakpoint source-tracking enabled
+@kindex show breakpoint source-tracking enabled
+@item set breakpoint source-tracking enabled @r{[}on@r{|}off@r{]}
+@itemx show breakpoint source-tracking enabled
+Control whether to enable source-tracking for breakpoints set by file and
+line number.  Use @code{on} to enable, @code{off} to disable.  When
+enabled, @value{GDBN} captures a window of source lines around each
+new file:line breakpoint and uses it to relocate the breakpoint if the
+source is modified and the executable is rebuilt.  @xref{Breakpoints},
+for a full description of the matching algorithm and its limitations.
+The default is @code{off}.  Breakpoints set by function name or address
+are not affected by this setting.
+
+If this setting is changed from @samp{on} to @samp{off}, then any
+existing source tracking information will be discarded.
 
 @kindex maint set target-async
 @kindex maint show target-async
@@ -44141,6 +44248,19 @@ If @value{GDBN} sent the @samp{single-inf-arg} feature in the
 with @samp{single-inf-arg+}, then there will only be a single
 @var{argument} string, which includes all inferior arguments,
 separated with whitespace.
+
+If @value{GDBN} didn't send @samp{single-inf-arg}, or the remote
+didn't choose to use this feature, then @value{GDBN} will split the
+inferior arguments before passing them to the remote target.  Single
+and double quotes surrounding any argument will have been removed by
+@value{GDBN}.  Any special shell characters within each argument will
+have been escaped with a backslash character except for quote and
+whitespace characters.  These will not be escaped within the arguments;
+the remote target is expected to escape these characters itself.
+
+These slightly complex rules exist for backward compatibility reasons.
+When implementing a new remote target, it is suggested that the
+@samp{single-inf-arg} feature be supported.
 
 @c FIXME:  What about non-stop mode?
 
@@ -49491,6 +49611,12 @@ An @samp{<osabi>} element has this form:
 
 @var{abi-name} is an OS ABI name from the same selection accepted by
 @w{@code{set osabi}} (@pxref{ABI, ,Configuring the Current ABI}).
+
+For Windows targets, a stub should report the generic ``Windows'' OS
+ABI rather than ``Windows-GNU'' or ``Windows-MSVC'', as the running
+program does not record which toolchain's ABI it follows.
+@value{GDBN} resolves the generic name to a flavor itself (@pxref{ABI,
+,Configuring the Current ABI}).
 
 @subsection Compatible Architecture
 @cindex @code{<compatible>}

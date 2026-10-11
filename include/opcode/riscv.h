@@ -606,6 +606,12 @@ enum riscv_insn_class
   INSN_CLASS_ZACAS,
   INSN_CLASS_ZABHA_AND_ZACAS,
   INSN_CLASS_H,
+  INSN_CLASS_XANDESBFHCVT,
+  INSN_CLASS_XANDESVBFHCVT,
+  INSN_CLASS_XANDESVSINTLOAD,
+  INSN_CLASS_XANDESVPACKFPH,
+  INSN_CLASS_XANDESVDOT,
+  INSN_CLASS_XANDESVSINTH,
   INSN_CLASS_XCVALU,
   INSN_CLASS_XCVBI,
   INSN_CLASS_XCVBITMANIP,
@@ -628,6 +634,8 @@ enum riscv_insn_class
   INSN_CLASS_XTHEADVECTOR,
   INSN_CLASS_XTHEADVDOT,
   INSN_CLASS_XTHEADZVAMO,
+  INSN_CLASS_XXTVARITH,
+  INSN_CLASS_XXTVCODER,
   INSN_CLASS_XVENTANACONDOPS,
   INSN_CLASS_XSFVCP,
   INSN_CLASS_XSFCEASE,
@@ -737,6 +745,15 @@ struct riscv_opcode
 /* Instruction is actually a macro.  It should be ignored by the
    disassembler, and requires special treatment by the assembler.  */
 #define INSN_MACRO		0xffffffff
+
+/* Define Zcmt jump table constants.  */
+#define ZCMT_TOTAL_ENTRIES 256
+#define ZCMT_JT_BEGIN 0
+#define ZCMT_JT_END 31
+#define ZCMT_JT_NUM_ENTRIES (ZCMT_JT_END - ZCMT_JT_BEGIN + 1)
+#define ZCMT_JALT_BEGIN (ZCMT_JT_END + 1)
+#define ZCMT_JALT_END (ZCMT_TOTAL_ENTRIES - 1)
+#define ZCMT_JALT_NUM_ENTRIES (ZCMT_JALT_END - ZCMT_JALT_BEGIN + 1)
 
 /* This is a list of macro expanded instructions.  */
 enum

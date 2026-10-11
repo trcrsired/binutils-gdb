@@ -651,6 +651,7 @@ gcc(1), ld(1), and the Info entries for @file{binutils} and @file{ld}.
  [@b{--rename-section} @var{oldname}=@var{newname}]
  [@b{--[no-]trampolines}]
  [@b{--abi-windowed}|@b{--abi-call0}]
+ [@b{--[no-]abs32-rela}]
 @end ifset
 @ifset Z80
 
@@ -6700,7 +6701,7 @@ undefined.
 This is one of the ELF section stack manipulation directives.  The others are
 @code{.section} (@pxref{Section}), @code{.subsection} (@pxref{SubSection}),
 @code{.pushsection} (@pxref{PushSection}), and @code{.previous}
-(@pxref{Previous}).
+(@pxref{Previous}). It is also implemented on COFF targets.
 
 This directive replaces the current section (and subsection) with the top
 section (and subsection) on the section stack.  This section is popped off the
@@ -6716,7 +6717,7 @@ stack.
 This is one of the ELF section stack manipulation directives.  The others are
 @code{.section} (@pxref{Section}), @code{.subsection} (@pxref{SubSection}),
 @code{.pushsection} (@pxref{PushSection}), and @code{.popsection}
-(@pxref{PopSection}).
+(@pxref{PopSection}). It is also implemented on COFF targets.
 
 This directive swaps the current section (and subsection) with most recently
 referenced section/subsection pair prior to this one.  Multiple
@@ -6820,7 +6821,7 @@ expanded.  @xref{Macro}.
 This is one of the ELF section stack manipulation directives.  The others are
 @code{.section} (@pxref{Section}), @code{.subsection} (@pxref{SubSection}),
 @code{.popsection} (@pxref{PopSection}), and @code{.previous}
-(@pxref{Previous}).
+(@pxref{Previous}). It is also implemented on COFF targets.
 
 This directive pushes the current section (and subsection) onto the
 top of the section stack, and then replaces the current section and
@@ -6996,6 +6997,11 @@ will be as if no flags had been specified at all.
 
 If the optional argument to the @code{.section} directive is not quoted, it is
 taken as a subsection number (@pxref{Sub-Sections}).
+
+For COFF targets, the @code{.pushsection} (@pxref{PushSection}),
+@code{.popsection} (@pxref{PopSection}), and @code{.previous}
+(@pxref{Previous}) directives are also implemented.
+
 @end ifset
 
 @ifset ELF
@@ -8029,8 +8035,8 @@ exclusive, the linker can issue a diagnostic.
 @command{@value{AS}} currently supports two versions of object attributes:
 @itemize @bullet{}
 @item
-Object Attributes version 1 (OAv1) used by: ARC, ARM, C-SKY, MIPS, MSP430, M68K,
-PowerPC, RISC-V, SPARC, s390, and TIC6X.
+Object Attributes version 1 (OAv1) used by: ARC, ARM, AVR, C-SKY, MIPS,
+MSP430, M68K, PowerPC, RISC-V, SPARC, s390, and TIC6X.
 @item
 Object Attributes version 2 (OAv2) used by: AArch64.
 @end itemize
@@ -8098,6 +8104,31 @@ the flag value is 0, the file is compatible with other toolchains.  If it is 1,
 then the file is only compatible with the named toolchain.  If it is greater
 than 1, the file can only be processed by other toolchains under some private
 arrangement indicated by the flag value and the vendor name.
+@end table
+
+@subsection AVR Attributes
+
+@table @r
+@item Tag_GNU_AVR_VTABLE_AS (4)
+The @uref{https://gcc.gnu.org/onlinedocs/gcc/Named-Address-Spaces.html#AVR-Named-Address-Spaces,,named address space}
+for C++ virtual tables used by this object file:
+@itemize @bullet
+@item 0 for files that neither define nor access virtual tables.
+@item 1 for files that use the generic address space.
+@item 2 for files that use the 16-bit address space @code{__flash}.
+@item 3 for files that use the 16-bit address space @code{__flash1}.
+@item 4 for files that use the 16-bit address space @code{__flash2}.
+@item 5 for files that use the 16-bit address space @code{__flash3}.
+@item 6 for files that use the 16-bit address space @code{__flash4}.
+@item 7 for files that use the 16-bit address space @code{__flash5}.
+@item 8 for files that use the 24-bit address space @code{__flashx}.
+@end itemize
+
+@item Tag_GNU_AVR_BITS_DOUBLE (8)
+Bit size of the @code{double} type, or 0 if no @code{double} is used.
+
+@item Tag_GNU_AVR_BITS_LONG_DOUBLE (12)
+Bit size of the @code{long double} type, or 0 if no @code{long double} is used.
 @end table
 
 @subsection M680x0 Attributes

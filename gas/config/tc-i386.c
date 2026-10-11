@@ -1207,6 +1207,7 @@ static const arch_entry cpu_arch[] =
   SUBARCH (pconfig, PCONFIG, PCONFIG, false),
   SUBARCH (waitpkg, WAITPKG, WAITPKG, false),
   SUBARCH (cldemote, CLDEMOTE, CLDEMOTE, false),
+  SUBARCH (ace_v1, ACE_V1, ANY_ACE_V1, false),
   SUBARCH (amx_int8, AMX_INT8, ANY_AMX_INT8, false),
   SUBARCH (amx_bf16, AMX_BF16, ANY_AMX_BF16, false),
   SUBARCH (amx_fp16, AMX_FP16, ANY_AMX_FP16, false),
@@ -1245,6 +1246,8 @@ static const arch_entry cpu_arch[] =
   SUBARCH (rao_int, RAO_INT, RAO_INT, false),
   SUBARCH (rmpquery, RMPQUERY, ANY_RMPQUERY, false),
   SUBARCH (rmpread, RMPREAD, ANY_RMPREAD, false),
+  SUBARCH (rmpdirty, RMPDIRTY, ANY_RMPDIRTY, false),
+  SUBARCH (rmpopt, RMPOPT, ANY_RMPOPT, false),
   SUBARCH (fred, FRED, ANY_FRED, false),
   SUBARCH (lkgs, LKGS, ANY_LKGS, false),
   VECARCH (avx_vnni_int16, AVX_VNNI_INT16, ANY_AVX_VNNI_INT16, reset),
@@ -1254,7 +1257,9 @@ static const arch_entry cpu_arch[] =
   SUBARCH (pbndkb, PBNDKB, PBNDKB, false),
   VECARCH (avx10.1, AVX10_1, ANY_AVX512F, set),
   VECARCH (avx10.1aux, AVX10_1_AUX, ANY_AVX10_1_AUX, set),
+  VECARCH (avx10v1aux, AVX10_1_AUX, ANY_AVX10_1_AUX, set),
   VECARCH (avx10.2, AVX10_2, ANY_AVX10_2, set),
+  VECARCH (avx10v2aux, AVX10_V2_AUX, ANY_AVX10_V2_AUX, set),
   SUBARCH (user_msr, USER_MSR, USER_MSR, false),
   SUBARCH (apx_f, APX_F, ANY_APX_F, false),
   SUBARCH (apx_nci, APX_NCI, ANY_APX_NCI, false),
@@ -1903,6 +1908,7 @@ _is_cpu (const i386_cpu_attr *a, enum i386_cpu cpu)
     case CpuAPX_F:    return a->bitfield.cpuapx_f;
     case CpuAVX10_2:  return a->bitfield.cpuavx10_2;
     case CpuAMX_TRANSPOSE:  return a->bitfield.cpuamx_transpose;
+    case CpuACE_V1:   return a->bitfield.cpuace_v1;
     case Cpu64:       return a->bitfield.cpu64;
     case CpuNo64:     return a->bitfield.cpuno64;
     default:
@@ -2356,7 +2362,7 @@ cpu_flags_match (const insn_template *t)
 	      || any.bitfield.cpuavx512dq || any.bitfield.cpuamx_tile
 	      || any.bitfield.cpucmpccxadd || any.bitfield.cpuuser_msr
 	      || any.bitfield.cpumsr_imm || any.bitfield.cpuamx_transpose
-	      || any.bitfield.cpuamx_movrs))
+	      || any.bitfield.cpuamx_movrs || any.bitfield.cputile))
 	{
 	  /* These checks (verifying that APX_F() was properly used in the
 	     opcode table entry) make sure there's no need for an "else" to
@@ -2607,7 +2613,10 @@ match_simd_size (const i386_operand_type *t_types, unsigned int wanted,
 	   || (i.types[given].bitfield.zmmword
 	       && !t_types[wanted].bitfield.zmmword)
 	   || (i.types[given].bitfield.tmmword
-	       && !t_types[wanted].bitfield.tmmword));
+	       && !t_types[wanted].bitfield.tmmword)
+	   /* RegSIMD|Byte marks %bsr0; it is not the operand size.  */
+	   || (i.types[given].bitfield.byte
+	       && !t_types[wanted].bitfield.byte));
 }
 
 /* Return 1 if there is no conflict in any size between operand GIVEN
@@ -3348,6 +3357,15 @@ static void isa_disable (unsigned int idx)
 
   cpu_arch_isa_flags
     = cpu_flags_and_not (cpu_arch_isa_flags, cpu_arch[idx].disable);
+
+  /* TILE is internal. .noamx_tile and .noace_v1 do not automatically clear
+     it.  */
+  if (!cpu_arch_flags.bitfield.cpuamx_tile
+      && !cpu_arch_flags.bitfield.cpuace_v1)
+    {
+      cpu_arch_flags.bitfield.cputile = 0;
+      cpu_arch_isa_flags.bitfield.cputile = 0;
+    }
 }
 
 static void
@@ -3955,6 +3973,7 @@ const type_names[] =
   { { .bitfield = { .class = RegSIMD, .ymmword = 1 } }, "rYMM" },
   { { .bitfield = { .class = RegSIMD, .zmmword = 1 } }, "rZMM" },
   { { .bitfield = { .class = RegSIMD, .tmmword = 1 } }, "rTMM" },
+  { { .bitfield = { .class = RegSIMD, .byte = 1 } }, "bsr" },
   { { .bitfield = { .class = RegMask } }, "Mask reg" },
   { { .bitfield = { .class = RegBND } }, "rBND" },
 };
@@ -4262,9 +4281,21 @@ install_template (const insn_template *t)
 	   || maybe_cpu (t, CpuFMA) || maybe_cpu (t, CpuF16C))
 	  && (maybe_cpu (t, CpuAVX512F) || maybe_cpu (t, CpuAVX512VL)))
 	{
-	  if (need_evex_encoding (t)
-	      || (maybe_cpu (t, CpuFMA) && !cpu_arch_flags.bitfield.cpufma)
-	      || (maybe_cpu (t, CpuF16C) && !cpu_arch_flags.bitfield.cpuf16c))
+	  bool evex = need_evex_encoding (t) || pp.encoding == encoding_egpr;
+
+	  if (!evex
+	      && ((maybe_cpu (t, CpuFMA) && !cpu_arch_flags.bitfield.cpufma)
+		  || (maybe_cpu (t, CpuF16C) && !cpu_arch_flags.bitfield.cpuf16c)))
+	    {
+	      if (!cpu_arch_isa_flags.bitfield.cpuavx512vl
+		  && !i.types[i.operands - 1].bitfield.zmmword)
+		as_warn(_("%s: will use AVX512VL encoding; use {evex} to silence"),
+			insn_name (t));
+
+	      evex = true;
+	    }
+
+	  if (evex)
 	    {
 	      i.tm.opcode_modifier.vex = 0;
 	      i.tm.cpu.bitfield.cpuavx512f = i.tm.cpu_any.bitfield.cpuavx512f;
@@ -4287,7 +4318,7 @@ install_template (const insn_template *t)
 	   || maybe_cpu (t, CpuAVX512BW) || maybe_cpu (t, CpuBMI)
 	   || maybe_cpu (t, CpuBMI2) || maybe_cpu (t, CpuUSER_MSR)
 	   || maybe_cpu (t, CpuMSR_IMM) || maybe_cpu (t, CpuAMX_TRANSPOSE)
-	   || maybe_cpu (t, CpuAMX_MOVRS))
+	   || maybe_cpu (t, CpuAMX_MOVRS) || maybe_cpu (t, CpuTILE))
 	  && maybe_cpu (t, CpuAPX_F))
 	{
 	  if (need_evex_encoding (t))
@@ -4296,6 +4327,44 @@ install_template (const insn_template *t)
 	    i.tm.opcode_modifier.evex = 0;
 	}
     }
+
+  /* The various VNNI extensions are somewhat special:
+     - AVX512-VNNI pre-dates AVX-VNNI,
+     - AVX-VNNI-INT{8,16} have EVEX counterparts added by AVX10-V1-AUX.
+     In each case, when the former is disabled, warn about the use of a
+     potentially unexpected encoding unless
+     - a disambiguating pseudo-prefix or operand is in use, or
+     - the newer ISA extension was explicitly enabled.  */
+  if (is_cpu (t, CpuAVX_VNNI)
+      && !cpu_arch_isa_flags.bitfield.cpuavx_vnni
+      && pp.encoding != encoding_vex
+      && pp.encoding != encoding_vex3
+      && (!cpu_arch_flags.bitfield.cpuavx512_vnni
+	  || !cpu_arch_flags.bitfield.cpuavx512vl))
+    as_warn (_("%s: will use AVX-VNNI encoding; use {vex} to silence"),
+	     insn_name (t));
+
+  if (is_cpu (t, CpuAVX10_1_AUX)
+      && !cpu_arch_isa_flags.bitfield.cpuavx10_1_aux
+      && !need_evex_encoding (t)
+      && pp.encoding != encoding_egpr
+      && ((!cpu_arch_flags.bitfield.cpuavx_vnni_int8
+	   && is_cpu (t - 1, CpuAVX_VNNI_INT8))
+	  || (!cpu_arch_flags.bitfield.cpuavx_vnni_int16
+	   && is_cpu (t - 1, CpuAVX_VNNI_INT16))))
+    as_warn (_("%s: will use AVX10 encoding; use {evex} to silence"),
+	     insn_name (t));
+
+  /* CRC32 is also somewhat special, as its APX form is dependent upon only
+     APX_F.  */
+  if (t->mnem_off == MN_crc32
+      && is_cpu (t, CpuAPX_F)
+      && !cpu_arch_isa_flags.bitfield.cpuapx_f
+      && !cpu_arch_flags.bitfield.cpusse4_2
+      && !need_evex_encoding (t)
+      && pp.encoding != encoding_egpr)
+    as_warn (_("%s: will use APX encoding; use {evex} to silence"),
+	     insn_name (t));
 
   /* For CCMP and CTEST the template has EVEX.SCC in base_opcode. Move it out of
      there, to then adjust base_opcode to obtain its normal meaning.  */
@@ -4320,8 +4389,15 @@ install_template (const insn_template *t)
   i.opcode_length = l;
 }
 
-/* Build the VEX prefix.  */
+/* Build the VEX prefix (2- or 3-byte)
 
+   | C5h |
+   | `R3 | `vvvv | L | pp |
+
+   | C4h |
+   | `R3 | `X3 | `B3 | mmmmm |
+   | W | `vvvv | L | pp |
+*/
 static void
 build_vex_prefix (const insn_template *t)
 {
@@ -4497,9 +4573,7 @@ is_any_vex_encoding (const insn_template *t)
 static INLINE bool
 is_apx_evex_encoding (void)
 {
-  return i.rex2 || i.tm.opcode_space == SPACE_MAP4 || pp.has_nf
-    || (i.vex.register_specifier
-	&& (i.vex.register_specifier->reg_flags & RegRex2));
+  return (i.rex2 & REX_B) || i.tm.opcode_space == SPACE_MAP4 || pp.has_nf;
 }
 
 static INLINE bool
@@ -4580,8 +4654,12 @@ get_broadcast_bytes (const insn_template *t, bool diag)
   return bytes;
 }
 
-/* Build the EVEX prefix.  */
-
+/* Build the EVEX prefix (4-byte) for evex insn
+   | 62h |
+   | `R3 | `X3 | `B3 | `R4 | B4 | mmm |
+   | W | `vvvv | U | pp |
+   | z | L'L | b | `V4 | aaa |
+*/
 static void
 build_evex_prefix (void)
 {
@@ -4599,7 +4677,7 @@ build_evex_prefix (void)
 	register_specifier += 8;
       /* The upper 16 registers are encoded in the fourth byte of the
 	 EVEX prefix.  */
-      if (!(i.vex.register_specifier->reg_flags & RegVRex))
+      if (!(i.vex.register_specifier->reg_flags & (RegVRex | RegRex2)))
 	i.vex.bytes[3] = 0x8;
       register_specifier = ~register_specifier & 0xf;
     }
@@ -4629,10 +4707,9 @@ build_evex_prefix (void)
 
   /* The fifth bit of the second EVEX byte is 1's compliment of the
      REX_R bit in VREX.  */
-  if (!(i.vrex & REX_R))
+  if (!((i.vrex | i.rex2) & REX_R))
     i.vex.bytes[1] |= 0x10;
-  else
-    vrex_used |= REX_R;
+  vrex_used |= i.vrex & REX_R;
 
   if ((i.reg_operands + i.imm_operands) == i.operands)
     {
@@ -4712,7 +4789,7 @@ build_evex_prefix (void)
   /* The third byte of the EVEX prefix.  */
   i.vex.bytes[2] = ((w << 7)
 		    | (register_specifier << 3)
-		    | 4 /* Encode the U bit.  */
+		    | (i.rex2 & REX_X ? 0 : 4) /* Encode the U bit.  */
 		    | i.tm.opcode_modifier.opcodeprefix);
 
   /* The fourth byte of the EVEX prefix.  */
@@ -4767,7 +4844,7 @@ build_evex_prefix (void)
 
 /* Build (2 bytes) rex2 prefix.
    | D5h |
-   | m | R4 X4 B4 | W R X B |
+   | m | R4 X4 B4 | W R3 X3 B3 |
 
    Rex2 reuses i.vex as they both encode i.tm.opcode_space in their prefixes.
  */
@@ -4782,11 +4859,20 @@ build_rex2_prefix (void)
 		    | ((i.rex | i.prefix[REX_PREFIX]) & 0xf));
 }
 
-/* Build the EVEX prefix (4-byte) for evex insn
+/* Build the EVEX prefix (4-byte) for APX insn.  Apart from the basic form
+   (see build_evex_prefix()) there are two new forms:
+
    | 62h |
-   | `R`X`B`R' | B'mmm |
-   | W | v`v`v`v | `x' | pp |
-   | z| L'L | b | `v | aaa |
+   | `R3 | `X3 | `B3 | `R4 | B4 | mmm |
+   | W | `vvvv | `X4 | pp |
+   | 00 | L | ND | `V4 | NF | 00 |
+
+   and for NCI:
+
+   | 62h |
+   | `R3 | `X3 | `B3 | `R4 | B4 | mmm |
+   | W | OSZC | `X4 | pp |
+   | 0000 | SC3 SC2 SC1 SC0 |
 */
 static bool
 build_apx_evex_prefix (bool force_nd)
@@ -4820,41 +4906,41 @@ build_apx_evex_prefix (bool force_nd)
     }
 
   build_evex_prefix ();
-  if (i.rex2 & REX_R)
-    i.vex.bytes[1] &= ~0x10;
   if (i.rex2 & REX_B)
     i.vex.bytes[1] |= 0x08;
-  if (i.rex2 & REX_X)
-    {
-      gas_assert (i.rm.mode != 3);
-      i.vex.bytes[2] &= ~0x04;
-    }
-  if (i.vex.register_specifier
-      && i.vex.register_specifier->reg_flags & RegRex2)
-    i.vex.bytes[3] &= ~0x08;
 
-  /* Encode the NDD bit of the instruction promoted from the legacy
-     space. ZU shares the same bit with NDD.  */
+  /* Encode the ND bit of instructions promoted from legacy space.
+     ZU shares the bit with ND.  */
   if ((i.vex.register_specifier && i.tm.opcode_space == SPACE_MAP4)
       || i.tm.opcode_modifier.operandconstraint == ZERO_UPPER
       || force_nd)
-    i.vex.bytes[3] |= 0x10;
+    {
+      /* Incoming ND and aaa bits should be 0.  */
+      know (!(i.vex.bytes[3] & 0x17));
+
+      i.vex.bytes[3] |= 0x10;
+    }
 
   /* Encode SCC and oszc flags bits.  */
   if (i.tm.opcode_modifier.operandconstraint == SCC)
     {
-      /* The default value of vvvv is 1111 and needs to be cleared.  */
-      i.vex.bytes[2] &= ~0x78;
-      i.vex.bytes[2] |= (i.oszc_flags << 3);
-      /* ND and aaa bits shold be 0.  */
+      /* Incoming ND and aaa bits should (still) be 0.  */
       know (!(i.vex.bytes[3] & 0x17));
-      /* The default value of V' is 1 and needs to be cleared.  */
+
+      /* The incoming value of vvvv is 1111, i.e. bits may need clearing.  */
+      i.vex.bytes[2] &= (i.oszc_flags << 3) | 0x87;
+      /* The incoming value of V4 is 1 and needs to be cleared.  */
       i.vex.bytes[3] = (i.vex.bytes[3] & ~0x08) | i.scc;
     }
 
   /* Encode the NF bit.  */
   if (pp.has_nf || i.tm.opcode_modifier.operandconstraint == EVEX_NF)
-    i.vex.bytes[3] |= 0x04;
+    {
+      /* Incoming aaa bits should (still) be 0.  */
+      know (!(i.vex.bytes[3] & 7));
+
+      i.vex.bytes[3] |= 0x04;
+    }
 
   return true;
 }
@@ -7328,7 +7414,8 @@ i386_assemble (char *line)
 
   /* All Intel opcodes have reversed operands except for "bound", "enter",
      "invlpg*", "monitor*", "mwait*", "tpause", "umwait", "pvalidate",
-     "rmpadjust", "rmpquery", and deprecated forms of "rmpupdate".
+     "rmpadjust", "rmpquery", "rmpopt", "rmpchkd", and deprecated forms of
+     "rmpupdate".
      We also don't reverse intersegment "jmp" and "call" instructions with
      2 immediate operands so that the immediate segment precedes the offset
      consistently in Intel and AT&T modes.  */
@@ -9828,7 +9915,8 @@ match_template (char mnem_suffix)
 		      && (intel_syntax || intel_mnemonic))
 		    found_reverse_match |= Opcode_FloatR;
 		}
-	      else if (is_cpu (t, CpuFMA4) || is_cpu (t, CpuXOP))
+	      else if (is_cpu (t, CpuFMA4) || is_cpu (t, CpuXOP)
+		       || is_cpu (t, CpuACE_V1))
 		{
 		  found_reverse_match = Opcode_VexW;
 		  goto check_operands_345;
@@ -10153,8 +10241,10 @@ match_template (char mnem_suffix)
 	 flipping VEX.W.  */
       i.tm.opcode_modifier.vexw ^= VEXW0 ^ VEXW1;
 
-      /* In 3-operand insns XOP.W changes which operand goes into XOP.vvvv.  */
-      i.tm.opcode_modifier.vexvvvv = VexVVVV_SRC1;
+      /* In most 3-operand insns XOP.W changes which operand goes into
+	 XOP.vvvv.  */
+      if (!is_cpu (t, CpuACE_V1))
+	i.tm.opcode_modifier.vexvvvv = VexVVVV_SRC1;
 
     swap_first_2:
       j = i.tm_types[0].bitfield.imm8;
@@ -11030,11 +11120,11 @@ process_operands (void)
   else if (i.tm.opcode_modifier.immext)
     process_immext ();
 
-  /* TILEZERO is unusual in that it has a single operand encoded in ModR/M.reg,
-     not ModR/M.rm.  To avoid special casing this in build_modrm_byte(), fake a
-     new destination operand here, while converting the source one to register
-     number 0.  */
-  if (i.tm.mnem_off == MN_tilezero)
+  /* TILEZERO and BSRINIT are unusual in that they have a single operand
+     encoded in ModR/M.reg, not ModR/M.rm.  To avoid special casing this in
+     build_modrm_byte(), fake a new destination operand here, while converting
+     the source one to register number 0.  */
+  if (i.tm.mnem_off == MN_tilezero || i.tm.mnem_off == MN_bsrinit)
     {
       copy_operand (1, 0);
       i.op[0].regs -= i.op[0].regs->reg_num;
@@ -12516,7 +12606,7 @@ output_insn (const struct last_insn *last_insn)
       unsigned int feature_2_used = 0;
 
       if ((i.xstate & xstate_tmm) == xstate_tmm
-	  || is_cpu (&i.tm, CpuAMX_TILE))
+	  || is_cpu (&i.tm, CpuTILE))
 	feature_2_used |= GNU_PROPERTY_X86_FEATURE_2_TMM;
 
       if (is_cpu (&i.tm, Cpu8087)
@@ -17001,8 +17091,14 @@ static bool check_register (const reg_entry *r)
     return false;
 
   if (r->reg_type.bitfield.tmmword
-      && (!cpu_arch_flags.bitfield.cpuamx_tile
+      && (!cpu_arch_flags.bitfield.cputile
           || flag_code != CODE_64BIT))
+    return false;
+
+  if (r->reg_type.bitfield.class == RegSIMD
+      && r->reg_type.bitfield.byte
+      && (!cpu_arch_flags.bitfield.cpuace_v1
+	  || flag_code != CODE_64BIT))
     return false;
 
   if (r->reg_type.bitfield.class == RegBND && !cpu_arch_flags.bitfield.cpumpx)

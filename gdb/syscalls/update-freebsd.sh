@@ -28,9 +28,9 @@
 # rather than syscalls.master as syscall.h is easier to parse.
 
 if [ $# -ne 1 ]; then
-   echo "Error: Path to syscall.h missing. Aborting."
-   echo "Usage: update-freebsd.sh <path-to-syscall.h>"
-   exit 1
+    echo "Error: Path to syscall.h missing. Aborting."
+    echo "Usage: update-freebsd.sh <path-to-syscall.h>"
+    exit 1
 fi
 
 year=$(date +%Y)
@@ -63,7 +63,7 @@ awk '
     sub(/^SYS_/,"",$2);
     printf "  <syscall name=\"%s\" number=\"%s\"", $2, $3
     if (sub(/^freebsd[0-9]*_/,"",$2) != 0)
-        printf " alias=\"%s\"", $2
+	printf " alias=\"%s\"", $2
     printf "/>\n"
 }
 /\/\* [0-9]* is obsolete [a-z_]* \*\// {

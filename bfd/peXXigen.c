@@ -3811,92 +3811,152 @@ rsrc_cmp (bool is_name, rsrc_entry * a, rsrc_entry * b)
   return res;
 }
 
-static void
-rsrc_print_name (char * buffer, rsrc_string string)
+static bool
+rsrc_string_print_str (rsrc_string buffer, const char * format, char * context)
+{
+  if (buffer.string == NULL || buffer.len == 0)
+    return false;
+
+  int printed = snprintf ((char *) buffer.string, buffer.len, format, context);
+
+  if (printed >= (int) buffer.len)
+    {
+      buffer.len = 0;
+      return false;
+    }
+
+  buffer.string += printed;
+  buffer.len    -= printed;
+  return true;
+}
+
+static bool
+rsrc_string_print_int (rsrc_string buffer, const char * format, int context)
+{
+  if (buffer.string == NULL || buffer.len == 0)
+    return false;
+
+  int printed = snprintf ((char *) buffer.string, buffer.len, format, context);
+
+  if (printed >= (int) buffer.len)
+    {
+      buffer.len = 0;
+      return false;
+    }
+
+  buffer.string += printed;
+  buffer.len    -= printed;
+  return true;
+}
+
+static bool
+rsrc_print_name (rsrc_string buffer, rsrc_string string)
 {
   unsigned int  i;
   bfd_byte *    name = string.string;
 
   for (i = string.len; i--; name += 2)
-    sprintf (buffer + strlen (buffer), "%.1s", name);
+    {
+      if (! rsrc_string_print_str (buffer, "%.1s", (char *) name))
+	return false;
+    }
+
+  return true;
 }
 
-static const char *
-rsrc_resource_name (rsrc_entry *entry, rsrc_directory *dir, char *buffer)
+static bool
+rsrc_resource_name (rsrc_entry *entry, rsrc_directory *dir, rsrc_string buffer)
 {
   bool is_string = false;
+  bool res = true;
 
-  buffer[0] = 0;
+  if (buffer.string == NULL || buffer.len == 0)
+    return false;
 
-  if (dir != NULL && dir->entry != NULL && dir->entry->parent != NULL
+  buffer.string[0] = 0;
+
+  if (dir != NULL
+      && dir->entry != NULL
+      && dir->entry->parent != NULL
       && dir->entry->parent->entry != NULL)
     {
-      strcpy (buffer, "type: ");
+      res &= rsrc_string_print_str (buffer, "%s", "type: ");
+
       if (dir->entry->parent->entry->is_name)
-	rsrc_print_name (buffer + strlen (buffer),
-			 dir->entry->parent->entry->name_id.name);
+	{
+	  res &= rsrc_print_name (buffer, dir->entry->parent->entry->name_id.name);
+	}
       else
 	{
 	  unsigned int id = dir->entry->parent->entry->name_id.id;
 
-	  sprintf (buffer + strlen (buffer), "%x", id);
+	  res &= rsrc_string_print_int (buffer, "%x", id);
+
 	  switch (id)
 	    {
-	    case 1: strcat (buffer, " (CURSOR)"); break;
-	    case 2: strcat (buffer, " (BITMAP)"); break;
-	    case 3: strcat (buffer, " (ICON)"); break;
-	    case 4: strcat (buffer, " (MENU)"); break;
-	    case 5: strcat (buffer, " (DIALOG)"); break;
-	    case 6: strcat (buffer, " (STRING)"); is_string = true; break;
-	    case 7: strcat (buffer, " (FONTDIR)"); break;
-	    case 8: strcat (buffer, " (FONT)"); break;
-	    case 9: strcat (buffer, " (ACCELERATOR)"); break;
-	    case 10: strcat (buffer, " (RCDATA)"); break;
-	    case 11: strcat (buffer, " (MESSAGETABLE)"); break;
-	    case 12: strcat (buffer, " (GROUP_CURSOR)"); break;
-	    case 14: strcat (buffer, " (GROUP_ICON)"); break;
-	    case 16: strcat (buffer, " (VERSION)"); break;
-	    case 17: strcat (buffer, " (DLGINCLUDE)"); break;
-	    case 19: strcat (buffer, " (PLUGPLAY)"); break;
-	    case 20: strcat (buffer, " (VXD)"); break;
-	    case 21: strcat (buffer, " (ANICURSOR)"); break;
-	    case 22: strcat (buffer, " (ANIICON)"); break;
-	    case 23: strcat (buffer, " (HTML)"); break;
-	    case 24: strcat (buffer, " (MANIFEST)"); break;
-	    case 240: strcat (buffer, " (DLGINIT)"); break;
-	    case 241: strcat (buffer, " (TOOLBAR)"); break;
+	    case   1: res &= rsrc_string_print_str (buffer, "%s", " (CURSOR)"); break;
+	    case   2: res &= rsrc_string_print_str (buffer, "%s", " (BITMAP)"); break;
+	    case   3: res &= rsrc_string_print_str (buffer, "%s", " (ICON)"); break;
+	    case   4: res &= rsrc_string_print_str (buffer, "%s", " (MENU)"); break;
+	    case   5: res &= rsrc_string_print_str (buffer, "%s", " (DIALOG)"); break;
+	    case   6: res &= rsrc_string_print_str (buffer, "%s", " (STRING)"); is_string = true; break;
+	    case   7: res &= rsrc_string_print_str (buffer, "%s", " (FONTDIR)"); break;
+	    case   8: res &= rsrc_string_print_str (buffer, "%s", " (FONT)"); break;
+	    case   9: res &= rsrc_string_print_str (buffer, "%s", " (ACCELERATOR)"); break;
+	    case  10: res &= rsrc_string_print_str (buffer, "%s", " (RCDATA)"); break;
+	    case  11: res &= rsrc_string_print_str (buffer, "%s", " (MESSAGETABLE)"); break;
+	    case  12: res &= rsrc_string_print_str (buffer, "%s", " (GROUP_CURSOR)"); break;
+	    case  14: res &= rsrc_string_print_str (buffer, "%s", " (GROUP_ICON)"); break;
+	    case  16: res &= rsrc_string_print_str (buffer, "%s", " (VERSION)"); break;
+	    case  17: res &= rsrc_string_print_str (buffer, "%s", " (DLGINCLUDE)"); break;
+	    case  19: res &= rsrc_string_print_str (buffer, "%s", " (PLUGPLAY)"); break;
+	    case  20: res &= rsrc_string_print_str (buffer, "%s", " (VXD)"); break;
+	    case  21: res &= rsrc_string_print_str (buffer, "%s", " (ANICURSOR)"); break;
+	    case  22: res &= rsrc_string_print_str (buffer, "%s", " (ANIICON)"); break;
+	    case  23: res &= rsrc_string_print_str (buffer, "%s", " (HTML)"); break;
+	    case  24: res &= rsrc_string_print_str (buffer, "%s", " (MANIFEST)"); break;
+	    case 240: res &= rsrc_string_print_str (buffer, "%s", " (DLGINIT)"); break;
+	    case 241: res &= rsrc_string_print_str (buffer, "%s", " (TOOLBAR)"); break;
 	    }
 	}
     }
 
   if (dir != NULL && dir->entry != NULL)
     {
-      strcat (buffer, " name: ");
+      res &= rsrc_string_print_str (buffer, "%s", " name: ");
+
       if (dir->entry->is_name)
-	rsrc_print_name (buffer + strlen (buffer), dir->entry->name_id.name);
+	{
+	  res &= rsrc_print_name (buffer, dir->entry->name_id.name);
+	}
       else
 	{
 	  unsigned int id = dir->entry->name_id.id;
 
-	  sprintf (buffer + strlen (buffer), "%x", id);
+	  res &= rsrc_string_print_int (buffer, "%x", id);
 
 	  if (is_string)
-	    sprintf (buffer + strlen (buffer), " (resource id range: %d - %d)",
-		     (id - 1) << 4, (id << 4) - 1);
+	    {
+	      res &= rsrc_string_print_str (buffer, "%s", " (resource id range: ");
+	      res &= rsrc_string_print_int (buffer, "%d", (id - 1) << 4);
+	      res &= rsrc_string_print_str (buffer, "%s", " - ");
+	      res &= rsrc_string_print_int (buffer, "%d", (id << 4) - 1);
+	      res &= rsrc_string_print_str (buffer, "%s", ")");
+	    }
 	}
     }
 
   if (entry != NULL)
     {
-      strcat (buffer, " lang: ");
+      res &= rsrc_string_print_str (buffer, "%s", " lang: ");
 
       if (entry->is_name)
-	rsrc_print_name (buffer + strlen (buffer), entry->name_id.name);
+	res &= rsrc_print_name (buffer, entry->name_id.name);
       else
-	sprintf (buffer + strlen (buffer), "%x", entry->name_id.id);
+	res &= rsrc_string_print_int (buffer, "%x", entry->name_id.id);
     }
 
-  return buffer;
+  return res;
 }
 
 /* *sigh* Windows resource strings are special.  Only the top 28-bits of
@@ -4156,11 +4216,20 @@ rsrc_sort_entries (rsrc_dir_chain *chain,
 			_bfd_error_handler (_(".rsrc merge failure: duplicate leaf"));
 		      else
 			{
-			  char buff[256];
+#define RSRC_RES_NAME_LEN 256
+			  char buff[RSRC_RES_NAME_LEN];
+			  rsrc_string buffer;
 
-			  _bfd_error_handler (_(".rsrc merge failure: duplicate leaf: %s"),
-					      rsrc_resource_name (entry, dir, buff));
+			  buffer.string = (bfd_byte *) buff;
+			  buffer.len = RSRC_RES_NAME_LEN;
+
+			  if (rsrc_resource_name (entry, dir, buffer))
+			    _bfd_error_handler (_(".rsrc merge failure: duplicate leaf: %s"),
+						buffer.string);
+			  else
+			    _bfd_error_handler (_(".rsrc merge failure: duplicate leaf"));
 			}
+
 		      bfd_set_error (bfd_error_file_truncated);
 		      return;
 		    }
@@ -4657,11 +4726,58 @@ _bfd_XXi_final_link_postscript (bfd * abfd, struct coff_final_link_info *pfinfo)
 	   || h1->root.type == bfd_link_hash_defweak)
 	  && h1->root.u.def.section != NULL
 	  && h1->root.u.def.section->output_section != NULL)
-	pe_data (abfd)->pe_opthdr.DataDirectory[PE_TLS_TABLE].VirtualAddress =
-	  (h1->root.u.def.value
-	   + h1->root.u.def.section->output_section->vma
-	   + h1->root.u.def.section->output_offset
-	   - pe_data (abfd)->pe_opthdr.ImageBase);
+	{
+	  pe_data (abfd)->pe_opthdr.DataDirectory[PE_TLS_TABLE].VirtualAddress =
+	    (h1->root.u.def.value
+	     + h1->root.u.def.section->output_section->vma
+	     + h1->root.u.def.section->output_offset
+	     - pe_data (abfd)->pe_opthdr.ImageBase);
+
+	  /* Set the alignment of the output `.tls` section which contains
+	     TLS template data, into `_tls_used.Characteristics`.  The other
+	     bits are set to zeros.  */
+	  asection *tls_sect = bfd_get_section_by_name (abfd, ".tls");
+	  if (tls_sect != NULL && tls_sect->alignment_power > 0)
+	    {
+	      /* Valid alignment values are 1 to 2**13 (8192 bytes).  */
+	      if (tls_sect->alignment_power <= 13)
+		{
+#if !defined(COFF_WITH_pep) && !defined(COFF_WITH_pex64) \
+    && !defined(COFF_WITH_peAArch64) && !defined(COFF_WITH_peLoongArch64) \
+    && !defined (COFF_WITH_peRiscV64)
+		  uint32_t offset_of_Characteristics = 0x14;
+#else
+		  uint32_t offset_of_Characteristics = 0x24;
+#endif
+		  char temp[4];
+		  bfd_put_32
+		    (abfd,
+		     IMAGE_SCN_ALIGN_POWER_CONST (tls_sect->alignment_power),
+		     temp);
+		  if (!bfd_set_section_contents
+			 (abfd,
+			  h1->root.u.def.section->output_section,
+			  temp,
+			  (h1->root.u.def.value
+			   + h1->root.u.def.section->output_offset
+			   + offset_of_Characteristics),
+			  4))
+		    {
+		      _bfd_error_handler
+			(_("%pB: unable to fill in DataDirectory[%d]: could not write %s.Characteristics"),
+			 abfd, PE_TLS_TABLE, name);
+		      result = false;
+		    }
+		}
+	      else
+		{
+		  _bfd_error_handler
+		    (_("%pB: unable to fill in DataDirectory[%d]: alignment of .tls section (%d) is too large"),
+		     abfd, PE_TLS_TABLE, 1 << tls_sect->alignment_power);
+		  result = false;
+		}
+	    }
+	}
       else
 	{
 	  _bfd_error_handler

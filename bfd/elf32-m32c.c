@@ -698,7 +698,11 @@ m32c_elf_check_relocs
 	     for it now.  */
 	case R_M32C_16:
 	  if (dynobj == NULL)
-	    elf_hash_table (info)->dynobj = dynobj = abfd;
+	    {
+	      dynobj = _bfd_elf_link_dynobj (info);
+	      if (dynobj == NULL)
+		return false;
+	    }
 	  splt = elf_hash_table (info)->splt;
 	  if (splt == NULL)
 	    {
@@ -758,7 +762,7 @@ m32c_elf_finish_dynamic_sections (struct bfd_link_info *info,
   /* As an extra sanity check, verify that all plt entries have
      been filled in.  */
 
-  if (dynobj != NULL && splt != NULL)
+  if (splt != NULL)
     {
       bfd_byte *contents = splt->contents;
       unsigned int i, size = splt->size;
@@ -775,24 +779,20 @@ m32c_elf_finish_dynamic_sections (struct bfd_link_info *info,
 static bool
 m32c_elf_early_size_sections (struct bfd_link_info *info)
 {
-  bfd *dynobj;
   asection *splt;
 
   if (bfd_link_relocatable (info))
     return true;
 
-  dynobj = elf_hash_table (info)->dynobj;
-  if (dynobj == NULL)
-    return true;
-
   splt = elf_hash_table (info)->splt;
-  BFD_ASSERT (splt != NULL);
-
-  splt->contents = (bfd_byte *) bfd_zalloc (dynobj, splt->size);
-  if (splt->contents == NULL)
-    return false;
-  splt->alloced = 1;
-
+  if (splt != NULL)
+    {
+      bfd *dynobj = elf_hash_table (info)->dynobj;
+      splt->contents = bfd_zalloc (dynobj, splt->size);
+      if (splt->contents == NULL)
+	return false;
+      splt->alloced = 1;
+    }
   return true;
 }
 

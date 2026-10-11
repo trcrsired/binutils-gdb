@@ -19,6 +19,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 #include "cp-support.h"
+#include "cp-name-parser.h"
 #include "language.h"
 #include "demangle.h"
 #include "cli/cli-cmds.h"
@@ -42,9 +43,6 @@
 #include "run-on-main-thread.h"
 #include "typeprint.h"
 #include "inferior.h"
-
-#define d_left(dc) (dc)->u.s_binary.left
-#define d_right(dc) (dc)->u.s_binary.right
 
 /* Functions related to demangled name parsing.  */
 
@@ -182,7 +180,6 @@ inspect_type (struct demangle_parse_info *info,
 	  long len;
 	  int is_anon;
 	  struct type *type;
-	  std::unique_ptr<demangle_parse_info> i;
 
 	  /* Get the real type of the typedef.  */
 	  type = check_typedef (otype);
@@ -253,8 +250,9 @@ inspect_type (struct demangle_parse_info *info,
 	     tree will contain pointers into NAME, so NAME cannot
 	     be free'd until all typedef conversion is done and
 	     the final result is converted into a string.  */
-	  i = cp_demangled_name_to_comp (name, NULL);
-	  if (i != NULL)
+	  if (demangle_parse_info_up i
+		= cp_demangled_name_to_comp (name);
+	      i != nullptr)
 	    {
 	      /* Merge the two trees.  */
 	      cp_merge_demangle_parse_infos (info, ret_comp, std::move (i));
@@ -596,12 +594,10 @@ cp_canonicalize_string_full (const char *string,
 			     canonicalization_ftype *finder,
 			     void *data)
 {
-  unsigned int estimated_len;
-  std::unique_ptr<demangle_parse_info> info;
+  unsigned int estimated_len = strlen (string) * 2;
+  demangle_parse_info_up info = cp_demangled_name_to_comp (string);
 
-  estimated_len = strlen (string) * 2;
-  info = cp_demangled_name_to_comp (string, NULL);
-  if (info != NULL)
+  if (info != nullptr)
     {
       /* Replace all the typedefs in the tree.  */
       replace_typedefs (info.get (), info->tree, finder, data);
@@ -641,17 +637,15 @@ cp_canonicalize_string_no_typedefs (const char *string)
 gdb::unique_xmalloc_ptr<char>
 cp_canonicalize_string (const char *string)
 {
-  std::unique_ptr<demangle_parse_info> info;
-  unsigned int estimated_len;
-
   if (cp_already_canonical (string))
     return nullptr;
 
-  info = cp_demangled_name_to_comp (string, NULL);
-  if (info == NULL)
+  demangle_parse_info_up info = cp_demangled_name_to_comp (string);
+
+  if (info == nullptr)
     return nullptr;
 
-  estimated_len = strlen (string) * 2;
+  unsigned int estimated_len = strlen (string) * 2;
   gdb::unique_xmalloc_ptr<char> us (cp_comp_to_string (info->tree,
 						       estimated_len));
 
@@ -677,7 +671,7 @@ cp_canonicalize_string (const char *string)
    freed when finished with the tree, or NULL if none was needed.
    OPTIONS will be passed to the demangler.  */
 
-static std::unique_ptr<demangle_parse_info>
+static demangle_parse_info_up
 mangled_name_to_comp (const char *mangled_name, int options,
 		      void **memory,
 		      gdb::unique_xmalloc_ptr<char> *demangled_p)
@@ -708,8 +702,8 @@ mangled_name_to_comp (const char *mangled_name, int options,
 
   /* If we could demangle the name, parse it to build the component
      tree.  */
-  std::unique_ptr<demangle_parse_info> info
-    = cp_demangled_name_to_comp (demangled_name.get (), NULL);
+  demangle_parse_info_up info
+    = cp_demangled_name_to_comp (demangled_name.get ());
 
   if (info == NULL)
     return NULL;
@@ -727,13 +721,12 @@ cp_class_name_from_physname (const char *physname)
   gdb::unique_xmalloc_ptr<char> demangled_name;
   gdb::unique_xmalloc_ptr<char> ret;
   struct demangle_component *ret_comp, *prev_comp, *cur_comp;
-  std::unique_ptr<demangle_parse_info> info;
+  demangle_parse_info_up info
+    = mangled_name_to_comp (physname, DMGL_ANSI, &storage, &demangled_name);
   int done;
 
-  info = mangled_name_to_comp (physname, DMGL_ANSI,
-			       &storage, &demangled_name);
-  if (info == NULL)
-    return NULL;
+  if (info == nullptr)
+    return nullptr;
 
   done = 0;
   ret_comp = info->tree;
@@ -874,12 +867,11 @@ method_name_from_physname (const char *physname)
   gdb::unique_xmalloc_ptr<char> demangled_name;
   gdb::unique_xmalloc_ptr<char> ret;
   struct demangle_component *ret_comp;
-  std::unique_ptr<demangle_parse_info> info;
+  demangle_parse_info_up info
+    = mangled_name_to_comp (physname, DMGL_ANSI, &storage, &demangled_name);
 
-  info = mangled_name_to_comp (physname, DMGL_ANSI,
-			       &storage, &demangled_name);
-  if (info == NULL)
-    return NULL;
+  if (info == nullptr)
+    return nullptr;
 
   ret_comp = unqualified_name_from_comp (info->tree);
 
@@ -902,10 +894,9 @@ cp_func_name (const char *full_name)
 {
   gdb::unique_xmalloc_ptr<char> ret;
   struct demangle_component *ret_comp;
-  std::unique_ptr<demangle_parse_info> info;
+  demangle_parse_info_up info = cp_demangled_name_to_comp (full_name);
 
-  info = cp_demangled_name_to_comp (full_name, NULL);
-  if (!info)
+  if (info == nullptr)
     return nullptr;
 
   ret_comp = unqualified_name_from_comp (info->tree);
@@ -927,15 +918,15 @@ cp_remove_params_1 (const char *demangled_name, bool require_params)
 {
   bool done = false;
   struct demangle_component *ret_comp;
-  std::unique_ptr<demangle_parse_info> info;
   gdb::unique_xmalloc_ptr<char> ret;
 
   if (demangled_name == NULL)
     return NULL;
 
-  info = cp_demangled_name_to_comp (demangled_name, NULL);
-  if (info == NULL)
-    return NULL;
+  demangle_parse_info_up info = cp_demangled_name_to_comp (demangled_name);
+
+  if (info == nullptr)
+    return nullptr;
 
   /* First strip off any qualifiers, if we have a function or method.  */
   ret_comp = info->tree;

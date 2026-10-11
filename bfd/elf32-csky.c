@@ -2569,8 +2569,9 @@ csky_elf_check_relocs (bfd * abfd,
 		 this reloc.  */
 	      if (sreloc == NULL)
 		{
-		  if (htab->elf.dynobj == NULL)
-		    htab->elf.dynobj = abfd;
+		  if (htab->elf.dynobj == NULL
+		      && !_bfd_elf_link_dynobj (info))
+		    return false;
 
 		  sreloc = _bfd_elf_make_dynamic_reloc_section
 		    (sec, htab->elf.dynobj, 2, abfd, true);
@@ -2767,8 +2768,9 @@ csky_elf_check_relocs (bfd * abfd,
 	case R_CKCORE_GOTOFF_IMM18:
 	  if (htab->elf.sgot == NULL)
 	    {
-	      if (htab->elf.dynobj == NULL)
-		htab->elf.dynobj = abfd;
+	      if (htab->elf.dynobj == NULL
+		  && !_bfd_elf_link_dynobj (info))
+		return false;
 	      if (!_bfd_elf_create_got_section (htab->elf.dynobj, info))
 		return false;
 	    }
@@ -5341,6 +5343,7 @@ elf32_csky_obj_attrs_handle_unknown (bfd *abfd ATTRIBUTE_UNUSED,
 #define elf_backend_plt_readonly              1
 #define elf_backend_want_got_sym              1
 #define elf_backend_want_dynrelro             1
+#define elf_backend_want_stub_bfd	      1
 #define elf_backend_got_header_size           12
 #define elf_backend_want_got_plt              1
 

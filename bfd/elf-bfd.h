@@ -664,9 +664,7 @@ struct elf_link_hash_table
   /* TRUE if there are base symbols.  */
   bool has_base_symbols;
 
-  /* The BFD used to hold special sections created by the linker.
-     This will be the first BFD found which requires these sections to
-     be created.  */
+  /* The BFD used to hold special sections created by the linker.  */
   bfd *dynobj;
 
   /* The value to use when initialising got.refcount/offset and
@@ -1805,6 +1803,7 @@ struct elf_backend_data
   unsigned want_got_sym : 1;
   unsigned want_dynbss : 1;
   unsigned want_dynrelro : 1;
+  unsigned want_stub_bfd : 1;
 
   /* Targets which do not support physical addressing often require
      that the p_paddr field in the section header to be set to zero.
@@ -2731,8 +2730,14 @@ extern unsigned int _bfd_elf_default_action_discarded
 extern struct bfd_section *bfd_elf_tls_setup
   (struct bfd_link_info *);
 
+extern bfd *_bfd_elf_link_dynobj_internal
+  (struct bfd_link_info *, bool) ATTRIBUTE_HIDDEN;
+static inline bfd *
+_bfd_elf_link_dynobj (struct bfd_link_info *info)
+{ return _bfd_elf_link_dynobj_internal (info, true); }
+
 extern bool bfd_elf_link_create_dynamic_sections
-  (bfd *, struct bfd_link_info *);
+  (struct bfd_link_info *);
 extern bool _bfd_elf_omit_section_dynsym_default
   (struct bfd_link_info *, asection *) ATTRIBUTE_HIDDEN;
 extern bool _bfd_elf_omit_section_dynsym_all
@@ -3099,6 +3104,8 @@ extern char *elfcore_write_ppc_tm_ctar
 extern char *elfcore_write_ppc_tm_cppr
   (bfd *, char *, int *, const void *, int);
 extern char *elfcore_write_ppc_tm_cdscr
+  (bfd *, char *, int *, const void *, int);
+extern char *elfcore_write_ppc_dmr
   (bfd *, char *, int *, const void *, int);
 extern char *elfcore_write_s390_timer
   (bfd *, char *, int *, const void *, int);

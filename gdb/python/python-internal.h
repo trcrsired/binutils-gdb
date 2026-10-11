@@ -212,6 +212,68 @@ gdbpy_call_method (const gdbpy_ref<> &o, const char *method, Args... args)
 # define PyObject_CallMethod POISONED_PyObject_CallMethod
 #endif
 
+namespace detail
+{
+
+/* These are helpers for gdbpy_object_call_function_obj_args.  Each
+   function takes a single argument and returns a non-NULL
+   PyObject*.  */
+
+static inline PyObject *
+unwrap_ref (PyObject *val)
+{
+  gdb_assert (val != nullptr);
+  return val;
+}
+
+template<typename T>
+PyObject *
+unwrap_ref (const gdbpy_ref<T> &val)
+{
+  gdb_assert (val != nullptr);
+  return val.get ();
+}
+
+template<typename T>
+PyObject *
+unwrap_ref (gdbpy_borrowed_ref<T> val)
+{
+  /* Note that VAL cannot be nullptr here by construction.  */
+  return (PyObject *) val;
+}
+
+}
+
+/* A wrapper for PyObject_CallFunctionObjArgs that takes various kinds
+   of gdb wrappers, in addition to "PyObject *".  This variant does
+   not allow NULL arguments.  While PyObject_CallFunctionObjArgs
+   requires a trailing NULL, this function does not -- it supplies the
+   required trailing NULL on its own.
+
+   As a safety measure, no argument may be NULL.  While this may be
+   slightly inconvenient at times (you can't early-terminate the
+   arguments, you have to add a special case at the call site), it
+   avoids bugs where early termination was unintentional.  */
+template<typename Arg, typename... Args>
+static inline gdbpy_ref<>
+gdbpy_object_call_function_obj_args (Arg &&fn, Args && ...args)
+{
+  PyObject *result
+    = PyObject_CallFunctionObjArgs (detail::unwrap_ref (fn),
+				    detail::unwrap_ref (args)...,
+				    nullptr);
+  return gdbpy_ref<> (result);
+}
+
+/* Poison PyObject_CallFunctionObjArgs.  The typesafe wrapper
+   gdbpy_object_call_function_obj_args should be used instead.  */
+#undef PyObject_CallFunctionObjArgs
+#ifdef __GNUC__
+# pragma GCC poison PyObject_CallFunctionObjArgs
+#else
+# define PyObject_CallFunctionObjArgs POISONED_PyObject_CallFunctionObjArgs
+#endif
+
 /* The 'name' parameter of PyErr_NewException was missing the 'const'
    qualifier in Python <= 3.4.  Hence, we wrap it in a function to
    avoid errors when compiled with -Werror.  */
@@ -435,7 +497,7 @@ extern enum ext_lang_rc gdbpy_apply_val_pretty_printer
   (const struct extension_language_defn *,
    struct value *value,
    struct ui_file *stream, int recurse,
-   const struct value_print_options *options,
+   const value_print_options &options,
    const struct language_defn *language);
 extern void gdbpy_load_ptwrite_filter
   (const struct extension_language_defn *extlang,
@@ -970,14 +1032,14 @@ int gdbpy_is_value_object (PyObject *obj);
 gdbpy_ref<> apply_varobj_pretty_printer (PyObject *print_obj,
 					 struct value **replacement,
 					 struct ui_file *stream,
-					 const value_print_options *opts);
+					 const value_print_options &opts);
 gdbpy_ref<> gdbpy_get_varobj_pretty_printer (struct value *value);
 gdb::unique_xmalloc_ptr<char> gdbpy_get_display_hint (PyObject *printer);
 PyObject *gdbpy_default_visualizer (PyObject *self, PyObject *args);
 
 PyObject *gdbpy_print_options (PyObject *self, PyObject *args);
-void gdbpy_get_print_options (value_print_options *opts);
-extern const struct value_print_options *gdbpy_current_print_options;
+const value_print_options &gdbpy_get_print_options ();
+extern const value_print_options *gdbpy_current_print_options;
 
 void bpfinishpy_pre_stop_hook (struct gdbpy_breakpoint_object *bp_obj);
 void bpfinishpy_post_stop_hook (struct gdbpy_breakpoint_object *bp_obj);
@@ -1036,7 +1098,7 @@ struct varobj;
 std::unique_ptr<varobj_iter> py_varobj_get_iterator
      (struct varobj *var,
       PyObject *printer,
-      const value_print_options *opts);
+      const value_print_options &opts);
 
 /* Deleter for Py_buffer unique_ptr specialization.  */
 
@@ -1201,7 +1263,7 @@ public:
   }
 
   /* Unregister Python object OBJ.  OBJ will no longer be invalidated when
-     OWNER is about to be be freed.  */
+     OWNER is about to be freed.  */
   template <typename O>
   void remove (O *owner, obj_type *obj) const
   {
@@ -1214,7 +1276,7 @@ public:
   gdbpy_ref<> lookup (O *owner, val_type *val) const
   {
     obj_type *obj = get_storage (owner)->lookup (val);
-    Py_XINCREF (static_cast<PyObject *> (obj));
+    Py_XINCREF (obj);
     return gdbpy_ref<> (obj);
   }
 
@@ -1347,8 +1409,8 @@ protected:
   gdb::unordered_map<val_type *, obj_type *> m_objects;
 };
 
-extern int eval_python_command (const char *command, int start_symbol,
-				const char *filename = nullptr);
+extern gdbpy_ref<> eval_python_command
+  (const char *command, int start_symbol, const char *filename = nullptr);
 
 /* The following four functions are refcount-safe wrappers around
    Py_RETURN_{NONE,TRUE,FALSE,NOTIMPLEMENTED}.  */

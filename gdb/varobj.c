@@ -467,11 +467,13 @@ varobj_delete (struct varobj *var, bool only_children)
 static PyObject *
 instantiate_pretty_printer (PyObject *constructor, struct value *value)
 {
-  gdbpy_ref<> val_obj (value_to_value_object (value));
+  gdbpy_ref<> val_obj = value_to_value_object (value);
   if (val_obj == nullptr)
-    return NULL;
+    return nullptr;
 
-  return PyObject_CallFunctionObjArgs (constructor, val_obj.get (), NULL);
+  gdbpy_ref<> result = gdbpy_object_call_function_obj_args (constructor,
+							    val_obj);
+  return result.release ();
 }
 
 #endif
@@ -642,9 +644,8 @@ varobj_get_iterator (struct varobj *var)
 #if HAVE_PYTHON
   if (var->dynamic->pretty_printer)
     {
-      value_print_options opts;
-      varobj_formatted_print_options (&opts, var->format);
-      return py_varobj_get_iterator (var, var->dynamic->pretty_printer, &opts);
+      value_print_options opts = varobj_formatted_print_options (var->format);
+      return py_varobj_get_iterator (var, var->dynamic->pretty_printer, opts);
     }
 #endif
 
@@ -1129,9 +1130,7 @@ update_type_if_necessary (struct varobj *var, struct value *new_value)
 {
   if (new_value)
     {
-      struct value_print_options opts;
-
-      get_user_print_options (&opts);
+      const value_print_options &opts = get_user_print_options ();
       if (opts.objectprint)
 	{
 	  struct type *new_type = value_actual_type (new_value, 0, 0);
@@ -1365,20 +1364,13 @@ void
 varobj_set_visualizer (struct varobj *var, const char *visualizer)
 {
 #if HAVE_PYTHON
-  PyObject *mainmod;
-
   if (!gdb_python_initialized)
     return;
 
   gdbpy_enter_varobj enter_py (var);
 
-  mainmod = PyImport_AddModule ("__main__");
-  gdbpy_ref<> globals
-    = gdbpy_ref<>::new_reference (PyModule_GetDict (mainmod));
-  gdbpy_ref<> constructor (PyRun_String (visualizer, Py_eval_input,
-					 globals.get (), globals.get ()));
-
-  if (constructor == NULL)
+  auto constructor = eval_python_command (visualizer, Py_eval_input);
+  if (constructor == nullptr)
     {
       gdbpy_print_stack ();
       error (_("Could not evaluate visualizer expression: %s"), visualizer);
@@ -2102,13 +2094,14 @@ my_value_of_variable (struct varobj *var, enum varobj_display_formats format)
     return std::string ();
 }
 
-void
-varobj_formatted_print_options (struct value_print_options *opts,
-				enum varobj_display_formats format)
+value_print_options
+varobj_formatted_print_options (enum varobj_display_formats format)
 {
-  get_formatted_print_options (opts, format_code[(int) format]);
-  opts->deref_ref = false;
-  opts->raw = !pretty_printing;
+  value_print_options opts
+    = get_formatted_print_options (format_code[(int) format]);
+  opts.deref_ref = false;
+  opts.raw = !pretty_printing;
+  return opts;
 }
 
 std::string
@@ -2116,7 +2109,6 @@ varobj_value_get_print_value (struct value *value,
 			      enum varobj_display_formats format,
 			      const struct varobj *var)
 {
-  struct value_print_options opts;
   struct type *type = NULL;
   long len = 0;
   gdb::unique_xmalloc_ptr<char> encoding;
@@ -2130,7 +2122,7 @@ varobj_value_get_print_value (struct value *value,
   string_file stb;
   std::string thevalue;
 
-  varobj_formatted_print_options (&opts, format);
+  value_print_options opts = varobj_formatted_print_options (format);
 
 #if HAVE_PYTHON
   if (gdb_python_initialized)
@@ -2148,7 +2140,7 @@ varobj_value_get_print_value (struct value *value,
 	      gdbpy_ref<> output = apply_varobj_pretty_printer (value_formatter,
 								&replacement,
 								&stb,
-								&opts);
+								opts);
 
 	      /* If we have string like output ...  */
 	      if (output != nullptr && output != Py_None)
@@ -2223,14 +2215,14 @@ varobj_value_get_print_value (struct value *value,
   /* If the THEVALUE has contents, it is a regular string.  */
   if (!thevalue.empty ())
     current_language->printstr (&stb, type, (gdb_byte *) thevalue.c_str (),
-				len, encoding.get (), 0, &opts);
+				len, encoding.get (), 0, opts);
   else if (string_print)
     /* Otherwise, if string_print is set, and it is not a regular
        string, it is a lazy string.  */
-    val_print_string (type, encoding.get (), str_addr, len, &stb, &opts);
+    val_print_string (type, encoding.get (), str_addr, len, &stb, opts);
   else
     /* All other cases.  */
-    common_val_print (value, &stb, 0, &opts, current_language);
+    common_val_print (value, &stb, 0, opts, current_language);
 
   return stb.release ();
 }
@@ -2270,7 +2262,7 @@ varobj_value_is_changeable_p (const struct varobj *var)
   return var->root->lang_ops->value_is_changeable_p (var);
 }
 
-/* Return true if that varobj is floating, that is is always evaluated in the
+/* Return true if that varobj is floating, that is always evaluated in the
    selected frame, and not bound to thread/frame.  Such variable objects
    are created using '@' as frame specifier to -var-create.  */
 bool

@@ -1169,7 +1169,11 @@ lm32_elf_check_relocs (bfd *abfd,
 	    case R_LM32_GOTOFF_HI16:
 	    case R_LM32_GOTOFF_LO16:
 	      if (dynobj == NULL)
-		htab->root.dynobj = dynobj = abfd;
+		{
+		  dynobj = _bfd_elf_link_dynobj (info);
+		  if (dynobj == NULL)
+		    return false;
+		}
 	      if (!_bfd_elf_create_got_section (dynobj, info))
 		return false;
 	      break;
@@ -1185,7 +1189,11 @@ lm32_elf_check_relocs (bfd *abfd,
 	      /* FDPIC requires a GOT if there is a .rofixup section
 		 (Normal ELF doesn't). */
 	      if (dynobj == NULL)
-		htab->root.dynobj = dynobj = abfd;
+		{
+		  dynobj = _bfd_elf_link_dynobj (info);
+		  if (dynobj == NULL)
+		    return false;
+		}
 	      if (!_bfd_elf_create_got_section (dynobj, info))
 		return false;
 	      /* Create .rofixup section */
@@ -1202,7 +1210,11 @@ lm32_elf_check_relocs (bfd *abfd,
 	      if (htab->sfixup32 == NULL)
 		{
 		  if (dynobj == NULL)
-		    htab->root.dynobj = dynobj = abfd;
+		    {
+		      dynobj = _bfd_elf_link_dynobj (info);
+		      if (dynobj == NULL)
+			return false;
+		    }
 		  if (! create_rofixup_section (dynobj, info))
 		    return false;
 		}
@@ -2072,7 +2084,8 @@ lm32_elf_late_size_sections (struct bfd_link_info *info)
     return false;
 
   /* Allocate .rofixup section.  */
-  if (IS_FDPIC (info->output_bfd))
+  if (IS_FDPIC (info->output_bfd)
+      && lm32fdpic_fixup32_section (info) != NULL)
     {
       struct weak_symbol_list *list_start = NULL, *list_end = NULL;
       int rgot_weak_count = 0;

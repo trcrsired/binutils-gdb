@@ -548,7 +548,7 @@ linux_fork_detach (int from_tty, lwp_info *lp, inferior *inf)
 
 /* Temporarily switch to the infrun state stored on the fork_info
    identified by a given ptid_t.  When this object goes out of scope,
-   restore the currently selected infrun state.   */
+   restore the currently selected infrun state.  */
 
 class scoped_switch_fork_info
 {
@@ -571,7 +571,7 @@ public:
 
 	if (oldinf != newinf)
 	  {
-	    thread_info *tp = any_thread_of_inferior (newinf);
+	    thread_info *tp = any_non_exited_thread_of_inferior (newinf);
 	    switch_to_thread (tp);
 	    m_oldinf = oldinf;
 	  }
@@ -593,7 +593,7 @@ public:
 	    remove_breakpoints ();
 	    if (m_oldinf != nullptr)
 	      {
-		thread_info *tp = any_thread_of_inferior (m_oldinf);
+		thread_info *tp = any_non_exited_thread_of_inferior (m_oldinf);
 		switch_to_thread (tp);
 	      }
 	    fork_load_infrun_state (m_oldfp);
@@ -664,7 +664,12 @@ inferior_call_waitpid (ptid_t pptid, int pid)
       argv[1] = value_from_pointer (builtin_type (gdbarch)->builtin_data_ptr, 0);
       argv[2] = value_from_longest (builtin_type (gdbarch)->builtin_int, 0);
 
-      retv = call_function_by_hand (waitpid_fn, NULL, argv);
+      /* Use `int` default return type, even though waitpid actually
+	 returns pid_t.  This matches ARGV[0] above, which is
+	 similarly of type pid_t, but we treat as `int`.  */
+      retv = call_function_by_hand (waitpid_fn,
+				    builtin_type (gdbarch)->builtin_int,
+				    argv);
 
       if (value_as_long (retv) >= 0)
 	ret = 0;
@@ -836,7 +841,7 @@ print_checkpoints (struct ui_out *uiout, inferior *req_inf, fork_info *req_fi)
 	  if (req_fi != nullptr && req_fi != &fi)
 	    continue;
 
-	  thread_info *t = any_thread_of_inferior (inf);
+	  thread_info *t = any_non_exited_thread_of_inferior (inf);
 	  bool is_current = fi.ptid.pid () == inf->pid;
 
 	  ui_out_emit_tuple tuple_emitter (uiout);
@@ -1007,7 +1012,11 @@ checkpoint_command (const char *args, int from_tty)
     scoped_restore save_pid
       = make_scoped_restore (&checkpointing_pid, inferior_ptid.pid ());
 
-    ret = call_function_by_hand (fork_fn, NULL, {});
+    /* Use `int` as the default return type even though fork actually
+       returns pid_t.  */
+    ret = call_function_by_hand (fork_fn,
+				 builtin_type (gdbarch)->builtin_int,
+				 {});
   }
 
   if (!ret)	/* Probably can't happen.  */
@@ -1063,7 +1072,7 @@ linux_fork_context (struct fork_info *newfp, int from_tty, inferior *newinf)
 
   if (newinf != current_inferior ())
     {
-      thread_info *tp = any_thread_of_inferior (newinf);
+      thread_info *tp = any_non_exited_thread_of_inferior (newinf);
       switch_to_thread (tp);
       inferior_changed = true;
     }
@@ -1100,7 +1109,7 @@ restart_command (const char *args, int from_tty)
   /* Don't allow switching from a thread/fork that's running.  */
   inferior *curinf = current_inferior ();
   if (curinf->pid != 0
-      && any_thread_of_inferior (curinf)->state () == THREAD_RUNNING)
+      && any_non_exited_thread_of_inferior (curinf)->state () == THREAD_RUNNING)
     error (_("Cannot execute this command while "
 	     "the selected thread is running."));
 

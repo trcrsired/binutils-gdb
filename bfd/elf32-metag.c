@@ -1041,6 +1041,14 @@ elf_metag_link_hash_table_create (bfd *abfd)
   return &htab->etab.root;
 }
 
+void
+elf_metag_init_stub_bfd (struct bfd_link_info *info, bfd *stub_bfd)
+{
+  struct elf_metag_link_hash_table *htab = metag_link_hash_table (info);
+
+  htab->stub_bfd = stub_bfd;
+}
+
 /* Section name for stubs is the associated section name plus this
    string.  */
 #define STUB_SUFFIX ".stub"
@@ -2098,7 +2106,11 @@ elf_metag_check_relocs (bfd *abfd,
 	    case R_METAG_HI16_GOTPC:
 	    case R_METAG_LO16_GOTPC:
 	      if (dynobj == NULL)
-		htab->etab.dynobj = dynobj = abfd;
+		{
+		  dynobj = _bfd_elf_link_dynobj (info);
+		  if (dynobj == NULL)
+		    return false;
+		}
 	      if (!elf_metag_create_dynamic_sections (dynobj, info))
 		return false;
 	      break;
@@ -2264,17 +2276,19 @@ elf_metag_check_relocs (bfd *abfd,
 	      struct elf_dyn_relocs *hdh_p;
 	      struct elf_dyn_relocs **hdh_head;
 
-	      if (dynobj == NULL)
-		htab->etab.dynobj = dynobj = abfd;
-
 	      /* When creating a shared object, we must copy these
 		 relocs into the output file.  We create a reloc
 		 section in dynobj and make room for the reloc.  */
 	      if (sreloc == NULL)
 		{
-		  sreloc = _bfd_elf_make_dynamic_reloc_section
-		    (sec, htab->etab.dynobj, 2, abfd, /*rela?*/ true);
-
+		  if (dynobj == NULL)
+		    {
+		      dynobj = _bfd_elf_link_dynobj (info);
+		      if (dynobj == NULL)
+			return false;
+		    }
+		  sreloc = _bfd_elf_make_dynamic_reloc_section (sec, dynobj, 2,
+								abfd, true);
 		  if (sreloc == NULL)
 		    {
 		      bfd_set_error (bfd_error_bad_value);
@@ -2305,8 +2319,7 @@ elf_metag_check_relocs (bfd *abfd,
 	      hdh_p = *hdh_head;
 	      if (hdh_p == NULL || hdh_p->sec != sec)
 		{
-		  hdh_p = ((struct elf_dyn_relocs *)
-			   bfd_alloc (dynobj, sizeof *hdh_p));
+		  hdh_p = bfd_alloc (dynobj, sizeof *hdh_p);
 		  if (hdh_p == NULL)
 		    return false;
 		  hdh_p->next = *hdh_head;
@@ -3634,11 +3647,10 @@ instruction.  */
 /* See elf32-hppa.c and elf64-ppc.c.  */
 
 bool
-elf_metag_size_stubs(bfd *output_bfd, bfd *stub_bfd,
-		     struct bfd_link_info *info,
-		     bfd_signed_vma group_size,
-		     asection * (*add_stub_section) (const char *, asection *),
-		     void (*layout_sections_again) (void))
+elf_metag_size_stubs (struct bfd_link_info *info,
+		      bfd_signed_vma group_size,
+		      asection * (*add_stub_section) (const char *, asection *),
+		      void (*layout_sections_again) (void))
 {
   bfd_size_type stub_group_size;
   bool stubs_always_before_branch;
@@ -3646,7 +3658,6 @@ elf_metag_size_stubs(bfd *output_bfd, bfd *stub_bfd,
   struct elf_metag_link_hash_table *htab = metag_link_hash_table (info);
 
   /* Stash our params away.  */
-  htab->stub_bfd = stub_bfd;
   htab->add_stub_section = add_stub_section;
   htab->layout_sections_again = layout_sections_again;
   stubs_always_before_branch = group_size < 0;
@@ -3670,7 +3681,7 @@ elf_metag_size_stubs(bfd *output_bfd, bfd *stub_bfd,
 
   group_sections (htab, stub_group_size, stubs_always_before_branch);
 
-  switch (get_local_syms (output_bfd, info->input_bfds, info))
+  switch (get_local_syms (info->output_bfd, info->input_bfds, info))
     {
     default:
       if (htab->all_local_syms)
@@ -3723,7 +3734,7 @@ elf_metag_size_stubs(bfd *output_bfd, bfd *stub_bfd,
 	      /* If this section is a link-once section that will be
 		 discarded, then don't create any stubs.  */
 	      if (section->output_section == NULL
-		  || section->output_section->owner != output_bfd)
+		  || section->output_section->owner != info->output_bfd)
 		continue;
 
 	      /* Get the relocs.  */
@@ -3896,7 +3907,8 @@ elf_metag_size_stubs(bfd *output_bfd, bfd *stub_bfd,
       for (stub_sec = htab->stub_bfd->sections;
 	   stub_sec != NULL;
 	   stub_sec = stub_sec->next)
-	stub_sec->size = 0;
+	if (!(stub_sec->flags & SEC_LINKER_CREATED))
+	  stub_sec->size = 0;
 
       bfd_hash_traverse (&htab->bstab, metag_size_one_stub, htab);
 
@@ -3929,17 +3941,18 @@ elf_metag_build_stubs (struct bfd_link_info *info)
   for (stub_sec = htab->stub_bfd->sections;
        stub_sec != NULL;
        stub_sec = stub_sec->next)
-    {
-      bfd_size_type size;
+    if (!(stub_sec->flags & SEC_LINKER_CREATED))
+      {
+	bfd_size_type size;
 
-      /* Allocate memory to hold the linker stubs.  */
-      size = stub_sec->size;
-      stub_sec->contents = bfd_zalloc (htab->stub_bfd, size);
-      if (stub_sec->contents == NULL && size != 0)
-	return false;
-      stub_sec->alloced = 1;
-      stub_sec->size = 0;
-    }
+	/* Allocate memory to hold the linker stubs.  */
+	size = stub_sec->size;
+	stub_sec->contents = bfd_zalloc (htab->stub_bfd, size);
+	if (stub_sec->contents == NULL && size != 0)
+	  return false;
+	stub_sec->alloced = 1;
+	stub_sec->size = 0;
+      }
 
   /* Build the stubs as directed by the stub hash table.  */
   table = &htab->bstab;
@@ -4009,6 +4022,7 @@ elf_metag_plt_sym_val (bfd_vma i, const asection *plt,
 #define elf_backend_plt_readonly		1
 #define elf_backend_dtrel_excludes_plt		1
 #define elf_backend_want_dynrelro		1
+#define elf_backend_want_stub_bfd		1
 
 #define bfd_elf32_bfd_reloc_type_lookup	metag_reloc_type_lookup
 #define bfd_elf32_bfd_reloc_name_lookup	metag_reloc_name_lookup

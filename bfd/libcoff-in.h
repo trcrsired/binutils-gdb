@@ -384,6 +384,8 @@ extern const char *_bfd_coff_read_string_table
   (bfd *) ATTRIBUTE_HIDDEN;
 extern bool _bfd_coff_free_symbols
   (bfd *) ATTRIBUTE_HIDDEN;
+extern bool _bfd_coff_check_symbol_table
+  (bfd *) ATTRIBUTE_HIDDEN;
 extern struct coff_ptr_struct *coff_get_normalized_symtab
   (bfd *) ATTRIBUTE_HIDDEN;
 extern long coff_get_reloc_upper_bound
@@ -418,7 +420,7 @@ extern int coff_sizeof_headers
 extern bool bfd_coff_reloc16_relax_section
   (bfd *, asection *, struct bfd_link_info *, bool *) ATTRIBUTE_HIDDEN;
 extern bfd_byte *bfd_coff_reloc16_get_relocated_section_contents
-  (bfd *, struct bfd_link_info *, struct bfd_link_order *,
+  (bfd *, struct bfd_link_info *, const struct bfd_link_order *,
    bfd_byte *, bool, asymbol **) ATTRIBUTE_HIDDEN;
 extern bfd_vma bfd_coff_reloc16_get_value
   (arelent *, struct bfd_link_info *, asection *) ATTRIBUTE_HIDDEN;

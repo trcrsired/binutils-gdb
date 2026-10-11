@@ -42,7 +42,7 @@ enum gdbpy_string_repr_result
 
 /* If non-null, points to options that are in effect while
    printing.  */
-const struct value_print_options *gdbpy_current_print_options;
+const value_print_options *gdbpy_current_print_options;
 
 /* Helper function for find_pretty_printer which iterates over a list,
    calls each function and inspects output.  This will return a
@@ -78,8 +78,7 @@ search_pp_list (PyObject *list, PyObject *value)
 	    continue;
 	}
 
-      gdbpy_ref<> printer (PyObject_CallFunctionObjArgs (function, value,
-							 NULL));
+      gdbpy_ref<> printer = gdbpy_object_call_function_obj_args (function, value);
       if (printer == NULL)
 	return NULL;
       else if (printer != Py_None)
@@ -204,17 +203,15 @@ pretty_print_one_value (PyObject *printer, struct value **out_value)
 	{
 	  result.reset (PyObject_CallMethodObjArgs (printer, gdbpy_to_string_cst,
 						    NULL));
-	  if (result != NULL)
+	  if (result != nullptr
+	      && !gdbpy_is_string (result.get ())
+	      && !gdbpy_is_lazy_string (result.get ())
+	      && result != Py_None)
 	    {
-	      if (! gdbpy_is_string (result.get ())
-		  && ! gdbpy_is_lazy_string (result.get ())
-		  && result != Py_None)
-		{
-		  *out_value = convert_value_from_python (result.get ());
-		  if (PyErr_Occurred ())
-		    *out_value = NULL;
-		  result = NULL;
-		}
+	      *out_value = convert_value_from_python (result.get ());
+	      if (PyErr_Occurred ())
+		*out_value = nullptr;
+	      result = nullptr;
 	    }
 	}
     }
@@ -281,7 +278,7 @@ print_stack_unless_memory_error (struct ui_file *stream)
 static enum gdbpy_string_repr_result
 print_string_repr (PyObject *printer, const char *hint,
 		   struct ui_file *stream, int recurse,
-		   const struct value_print_options *options,
+		   const value_print_options &options,
 		   const struct language_defn *language,
 		   struct gdbarch *gdbarch)
 {
@@ -299,14 +296,14 @@ print_string_repr (PyObject *printer, const char *hint,
 	  long length;
 	  struct type *type;
 	  gdb::unique_xmalloc_ptr<char> encoding;
-	  struct value_print_options local_opts = *options;
+	  value_print_options local_opts = options;
 
 	  gdbpy_extract_lazy_string (py_str.get (), &addr, &type,
 				     &length, &encoding);
 
 	  local_opts.addressprint = false;
 	  val_print_string (type, encoding.get (), addr, (int) length,
-			    stream, &local_opts);
+			    stream, local_opts);
 	}
       else
 	{
@@ -338,10 +335,10 @@ print_string_repr (PyObject *printer, const char *hint,
     }
   else if (replacement)
     {
-      struct value_print_options opts = *options;
+      value_print_options opts = options;
 
       opts.addressprint = false;
-      common_val_print (replacement, stream, recurse, &opts, language);
+      common_val_print (replacement, stream, recurse, opts, language);
     }
   else
     {
@@ -358,7 +355,7 @@ print_string_repr (PyObject *printer, const char *hint,
 static void
 print_children (PyObject *printer, const char *hint,
 		struct ui_file *stream, int recurse,
-		const struct value_print_options *options,
+		const value_print_options &options,
 		const struct language_defn *language,
 		int is_py_none)
 {
@@ -391,17 +388,17 @@ print_children (PyObject *printer, const char *hint,
   /* Use the prettyformat_arrays option if we are printing an array,
      and the pretty option otherwise.  */
   if (is_array)
-    pretty = options->prettyformat_arrays;
+    pretty = options.prettyformat_arrays;
   else
     {
-      if (options->prettyformat == Val_prettyformat)
+      if (options.prettyformat == Val_prettyformat)
 	pretty = 1;
       else
-	pretty = options->prettyformat_structs;
+	pretty = options.prettyformat_structs;
     }
 
   done_flag = 0;
-  for (i = 0; i < options->print_max; ++i)
+  for (i = 0; i < options.print_max; ++i)
     {
       PyObject *py_v;
       const char *name;
@@ -462,7 +459,7 @@ print_children (PyObject *printer, const char *hint,
 
       /* In summary mode, we just want to print "= {...}" if there is
 	 a value.  */
-      if (options->summary)
+      if (options.summary)
 	{
 	  /* This increment tricks the post-loop logic to print what
 	     we want.  */
@@ -489,7 +486,7 @@ print_children (PyObject *printer, const char *hint,
 	{
 	  /* We print the index, not whatever the child method
 	     returned as the name.  */
-	  if (options->print_array_indexes)
+	  if (options.print_array_indexes)
 	    gdb_printf (stream, "[%d] = ", i);
 	}
       else if (! is_map)
@@ -504,13 +501,13 @@ print_children (PyObject *printer, const char *hint,
 	  struct type *type;
 	  long length;
 	  gdb::unique_xmalloc_ptr<char> encoding;
-	  struct value_print_options local_opts = *options;
+	  value_print_options local_opts = options;
 
 	  gdbpy_extract_lazy_string (py_v, &addr, &type, &length, &encoding);
 
 	  local_opts.addressprint = false;
 	  val_print_string (type, encoding.get (), addr, (int) length, stream,
-			    &local_opts);
+			    local_opts);
 	}
       else if (gdbpy_is_string (py_v))
 	{
@@ -536,12 +533,12 @@ print_children (PyObject *printer, const char *hint,
 	      /* When printing the key of a map we allow one additional
 		 level of depth.  This means the key will print before the
 		 value does.  */
-	      struct value_print_options opt = *options;
+	      value_print_options opt = options;
 	      if (is_map && i % 2 == 0
 		  && opt.max_depth != -1
 		  && opt.max_depth < INT_MAX)
 		++opt.max_depth;
-	      common_val_print (value, stream, recurse + 1, &opt, language);
+	      common_val_print (value, stream, recurse + 1, opt, language);
 	    }
 	}
 
@@ -573,7 +570,7 @@ enum ext_lang_rc
 gdbpy_apply_val_pretty_printer (const struct extension_language_defn *extlang,
 				struct value *value,
 				struct ui_file *stream, int recurse,
-				const struct value_print_options *options,
+				const value_print_options &options,
 				const struct language_defn *language)
 {
   struct type *type = value->type ();
@@ -611,7 +608,7 @@ gdbpy_apply_val_pretty_printer (const struct extension_language_defn *extlang,
     return EXT_LANG_RC_NOP;
 
   scoped_restore set_options = make_scoped_restore (&gdbpy_current_print_options,
-						    options);
+						    &options);
 
   /* If we are printing a map, we want some special formatting.  */
   gdb::unique_xmalloc_ptr<char> hint (gdbpy_get_display_hint (printer.get ()));
@@ -642,10 +639,10 @@ gdbpy_ref<>
 apply_varobj_pretty_printer (PyObject *printer_obj,
 			     struct value **replacement,
 			     struct ui_file *stream,
-			     const value_print_options *opts)
+			     const value_print_options &opts)
 {
   scoped_restore set_options = make_scoped_restore (&gdbpy_current_print_options,
-						    opts);
+						    &opts);
 
   *replacement = NULL;
   gdbpy_ref<> py_str = pretty_print_one_value (printer_obj, replacement);
@@ -718,8 +715,7 @@ gdbpy_print_options (PyObject *unused1, PyObject *unused2)
   if (result == nullptr)
     return nullptr;
 
-  value_print_options opts;
-  gdbpy_get_print_options (&opts);
+  const value_print_options &opts = gdbpy_get_print_options ();
 
   if (set_boolean (result.get (), "raw",
 		   opts.raw) < 0
@@ -770,13 +766,13 @@ gdbpy_print_options (PyObject *unused1, PyObject *unused2)
 
 /* Helper function that either finds the prevailing print options, or
    calls get_user_print_options.  */
-void
-gdbpy_get_print_options (value_print_options *opts)
+const value_print_options &
+gdbpy_get_print_options ()
 {
   if (gdbpy_current_print_options != nullptr)
-    *opts = *gdbpy_current_print_options;
+    return *gdbpy_current_print_options;
   else
-    get_user_print_options (opts);
+    return get_user_print_options ();
 }
 
 /* A ValuePrinter is just a "tag", so it has no state other than that

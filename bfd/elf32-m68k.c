@@ -2638,11 +2638,13 @@ elf_m68k_check_relocs (bfd *abfd,
 
 	  if (dynobj == NULL)
 	    {
-	      /* Create the .got section.  */
-	      elf_hash_table (info)->dynobj = dynobj = abfd;
-	      if (!_bfd_elf_create_got_section (dynobj, info))
+	      dynobj = _bfd_elf_link_dynobj (info);
+	      if (dynobj == NULL)
 		return false;
 	    }
+
+	  if (!_bfd_elf_create_got_section (dynobj, info))
+	    return false;
 
 	  if (got == NULL)
 	    {
@@ -4276,9 +4278,7 @@ elf_m68k_finish_dynamic_sections (struct bfd_link_info *info,
   asection *sdyn;
 
   dynobj = elf_hash_table (info)->dynobj;
-
   sgot = elf_hash_table (info)->sgotplt;
-  BFD_ASSERT (sgot != NULL);
   sdyn = bfd_get_linker_section (dynobj, ".dynamic");
 
   if (elf_hash_table (info)->dynamic_sections_created)
@@ -4287,7 +4287,7 @@ elf_m68k_finish_dynamic_sections (struct bfd_link_info *info,
       Elf32_External_Dyn *dyncon, *dynconend;
 
       splt = elf_hash_table (info)->splt;
-      BFD_ASSERT (splt != NULL && sdyn != NULL);
+      BFD_ASSERT (splt != NULL && sdyn != NULL && sgot != NULL);
 
       dyncon = (Elf32_External_Dyn *) sdyn->contents;
       dynconend = (Elf32_External_Dyn *) (sdyn->contents + sdyn->size);
@@ -4345,7 +4345,7 @@ elf_m68k_finish_dynamic_sections (struct bfd_link_info *info,
     }
 
   /* Fill in the first three entries in the global offset table.  */
-  if (sgot->size > 0)
+  if (sgot != NULL && sgot->size > 0)
     {
       if (sdyn == NULL)
 	bfd_put_32 (info->output_bfd, 0, sgot->contents);
@@ -4355,9 +4355,9 @@ elf_m68k_finish_dynamic_sections (struct bfd_link_info *info,
 		    sgot->contents);
       bfd_put_32 (info->output_bfd, 0, sgot->contents + 4);
       bfd_put_32 (info->output_bfd, 0, sgot->contents + 8);
-    }
 
-  elf_section_data (sgot->output_section)->this_hdr.sh_entsize = 4;
+      elf_section_data (sgot->output_section)->this_hdr.sh_entsize = 4;
+    }
 
   return true;
 }

@@ -5062,7 +5062,7 @@ sh_elf_relocate_section (struct bfd_link_info *info,
 static bfd_byte *
 sh_elf_get_relocated_section_contents (bfd *output_bfd,
 				       struct bfd_link_info *link_info,
-				       struct bfd_link_order *link_order,
+				       const struct bfd_link_order *link_order,
 				       bfd_byte *data,
 				       bool relocatable,
 				       asymbol **symbols)
@@ -5384,8 +5384,9 @@ sh_elf_check_relocs (bfd *abfd, struct bfd_link_info *info, asection *sec,
 	    case R_SH_TLS_GD_32:
 	    case R_SH_TLS_LD_32:
 	    case R_SH_TLS_IE_32:
-	      if (htab->root.dynobj == NULL)
-		htab->root.dynobj = abfd;
+	      if (htab->root.dynobj == NULL
+		  && !_bfd_elf_link_dynobj (info))
+		return false;
 	      if (!create_got_section (htab->root.dynobj, info))
 		return false;
 	      break;
@@ -5656,8 +5657,9 @@ sh_elf_check_relocs (bfd *abfd, struct bfd_link_info *info, asection *sec,
 	      struct elf_dyn_relocs *p;
 	      struct elf_dyn_relocs **head;
 
-	      if (htab->root.dynobj == NULL)
-		htab->root.dynobj = abfd;
+	      if (htab->root.dynobj == NULL
+		  && !_bfd_elf_link_dynobj (info))
+		return false;
 
 	      /* When creating a shared object, we must copy these
 		 reloc types into the output file.  We create a reloc

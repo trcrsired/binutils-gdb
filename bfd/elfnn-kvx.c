@@ -1235,26 +1235,6 @@ _bfd_kvx_resize_stubs (struct elf_kvx_link_hash_table *htab)
   bfd_hash_traverse (&htab->stub_hash_table, kvx_size_one_stub, htab);
 }
 
-/* Satisfy the ELF linker by filling in some fields in our fake bfd.  */
-
-bool
-kvx_elfNN_init_stub_bfd (struct bfd_link_info *info,
-			bfd *stub_bfd)
-{
-  struct elf_kvx_link_hash_table *htab;
-
-  elf_elfheader (stub_bfd)->e_ident[EI_CLASS] = ELFCLASSNN;
-
-/* Always hook our dynamic sections into the first bfd, which is the
-   linker created stub bfd.  This ensures that the GOT header is at
-   the start of the output TOC section.  */
-  htab = elf_kvx_hash_table (info);
-  if (htab == NULL)
-    return false;
-
-  return true;
-}
-
 /* Determine and set the size of the stub section for a final link.
 
    The basic idea here is to examine all the relocations looking for
@@ -3198,11 +3178,6 @@ kvx_elf_create_got_section (bfd *abfd, struct bfd_link_info *info)
   /* The first bit of the global offset table is the header.  */
   s->size += bed->got_header_size;
 
-  /* we still need to handle got content when doing static link with PIC */
-  if (bfd_link_executable (info) && !bfd_link_pic (info)) {
-    htab->dynobj = abfd;
-  }
-
   return true;
 }
 
@@ -3332,8 +3307,9 @@ elfNN_kvx_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	       this reloc.  */
 	    if (sreloc == NULL)
 	      {
-		if (htab->root.dynobj == NULL)
-		  htab->root.dynobj = abfd;
+		if (htab->root.dynobj == NULL
+		    && !_bfd_elf_link_dynobj (info))
+		  return false;
 
 		sreloc = _bfd_elf_make_dynamic_reloc_section
 		  (sec, htab->root.dynobj, LOG_FILE_ALIGN, abfd, /*rela? */ true);
@@ -3477,8 +3453,9 @@ elfNN_kvx_check_relocs (bfd *abfd, struct bfd_link_info *info,
 		  }
 	      }
 
-	    if (htab->root.dynobj == NULL)
-	      htab->root.dynobj = abfd;
+	    if (htab->root.dynobj == NULL
+		&& !_bfd_elf_link_dynobj (info))
+	      return false;
 	    if (! kvx_elf_create_got_section (htab->root.dynobj, info))
 	      return false;
 	    break;
@@ -3495,8 +3472,9 @@ elfNN_kvx_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	case BFD_RELOC_KVX_S37_GOTADDR_LO10:
 	case BFD_RELOC_KVX_S37_GOTADDR_UP27:
 
-	  if (htab->root.dynobj == NULL)
-	    htab->root.dynobj = abfd;
+	  if (htab->root.dynobj == NULL
+	      && !_bfd_elf_link_dynobj (info))
+	    return false;
 	  if (! kvx_elf_create_got_section (htab->root.dynobj, info))
 	    return false;
 	  break;
@@ -4758,6 +4736,7 @@ elfNN_kvx_plt_sym_val (bfd_vma i, const asection *plt,
 #define elf_backend_plt_readonly       1
 #define elf_backend_want_got_plt       1
 #define elf_backend_want_plt_sym       0
+#define elf_backend_want_stub_bfd      1
 #define elf_backend_may_use_rel_p      0
 #define elf_backend_may_use_rela_p     1
 #define elf_backend_default_use_rela_p 1

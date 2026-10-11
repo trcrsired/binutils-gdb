@@ -272,10 +272,9 @@ static struct type *
 linux_get_siginfo_type (struct gdbarch *gdbarch)
 {
   struct linux_gdbarch_data *linux_gdbarch_data;
-  struct type *void_ptr_type;
   struct type *uid_type, *pid_type;
   struct type *sigval_type, *clock_type;
-  struct type *siginfo_type, *sifields_type;
+  struct type *siginfo_type, *sifields_type, *sigfault_union_type;
   struct type *type;
 
   linux_gdbarch_data = get_linux_gdbarch_data (gdbarch);
@@ -285,11 +284,22 @@ linux_get_siginfo_type (struct gdbarch *gdbarch)
   type_allocator alloc (gdbarch);
 
   const struct builtin_type *builtin_types = builtin_type (gdbarch);
+  struct type *short_type = builtin_types->builtin_short;
   struct type *int_type = builtin_types->builtin_int;
   struct type *uint_type = builtin_types->builtin_unsigned_int;
   struct type *long_type = builtin_types->builtin_long;
+  struct type *unsigned_long_type = builtin_types->builtin_unsigned_long;
+  struct type *uint32_type = builtin_types->builtin_uint32;
+  struct type *void_ptr_type
+    = lookup_pointer_type (builtin_type (gdbarch)->builtin_void);
 
-  void_ptr_type = lookup_pointer_type (builtin_type (gdbarch)->builtin_void);
+  /* Compute padding length, i.e. __ADDR_BND_PKEY_PAD.  */
+  unsigned alignof_void_ptr = type_align (void_ptr_type);
+  unsigned padding_size = (alignof_void_ptr < short_type->length ()
+			   ? short_type->length ()
+			   : alignof_void_ptr);
+  struct type *addr_bnd_pkey_padding_type
+    = init_vector_type (builtin_types->builtin_uint8, padding_size);
 
   /* sival_t */
   sigval_type = arch_composite_type (gdbarch, NULL, TYPE_CODE_UNION);
@@ -364,9 +374,40 @@ linux_get_siginfo_type (struct gdbarch *gdbarch)
   append_composite_type_field (type, "si_stime", clock_type);
   append_composite_type_field (sifields_type, "_sigchld", type);
 
-  /* _sigfault */
+  /* Begin _sigfault's anonymous union.  */
+  sigfault_union_type = arch_composite_type (gdbarch, NULL, TYPE_CODE_UNION);
+  /* used on alpha and sparc */
+  append_composite_type_field (sigfault_union_type, "si_trapno", int_type);
+  /* used when si_code is BUS_MCEERR_AR or BUS_MCEERR_AO.  */
+  append_composite_type_field (sigfault_union_type, "si_addr_lsb", short_type);
+
+  /* used when si_code=SEGV_BNDERR */
+  type = arch_composite_type (gdbarch, NULL, TYPE_CODE_STRUCT);
+  append_composite_type_field (type, "_dummy_bnd", addr_bnd_pkey_padding_type);
+  append_composite_type_field (type, "si_lower", void_ptr_type);
+  append_composite_type_field (type, "si_upper", void_ptr_type);
+  append_composite_type_field (sigfault_union_type, "_addr_bnd", type);
+
+  /* used when si_code=SEGV_PKUERR */
+  type = arch_composite_type (gdbarch, NULL, TYPE_CODE_STRUCT);
+  append_composite_type_field (type, "_dummy_pkey", addr_bnd_pkey_padding_type);
+  append_composite_type_field (type, "si_pkey", uint32_type);
+  append_composite_type_field (sigfault_union_type, "_addr_pkey", type);
+
+  /* used when si_code=TRAP_PERF */
+  type = arch_composite_type (gdbarch, NULL, TYPE_CODE_STRUCT);
+  append_composite_type_field (type, "si_perf_data", unsigned_long_type);
+  append_composite_type_field (type, "si_perf_type", uint32_type);
+  append_composite_type_field (type, "si_perf_flags", uint32_type);
+  append_composite_type_field (sigfault_union_type, "_perf", type);
+
+  /* End _sigfault's anonymous union.  */
+
+  /* _sigfault is set by SIGILL, SIGFPE, SIGSEGV, SIGBUS, SIGTRAP, SIGEMT */
   type = arch_composite_type (gdbarch, NULL, TYPE_CODE_STRUCT);
   append_composite_type_field (type, "si_addr", void_ptr_type);
+  /* Note: this is an anonymous union.  */
+  append_composite_type_field (type, "", sigfault_union_type);
   append_composite_type_field (sifields_type, "_sigfault", type);
 
   /* _sigpoll */
@@ -413,6 +454,30 @@ static bool
 linux_has_shared_address_space (struct gdbarch *gdbarch)
 {
   return linux_is_uclinux ();
+}
+
+/* Return the ptid of a thread of the current inferior whose lwp id can be
+   used to build "/proc/<lwp>" paths.
+
+   Through any_non_exited_thread_of_inferior, this function prefers the
+   currently selected thread, if it has not exited.  For most information in
+   /proc, it does not matter which thread of a process we pick.  But a few
+   entries (like stat counters) are thread-specific.  This allows the user
+   to focus a particular thread and get specific information about that
+   thread.
+
+   Throw an error if the inferior has no thread that GDB believes is
+   alive.  */
+
+static ptid_t
+get_ptid_for_slash_proc ()
+{
+  if (thread_info *thread
+	= any_non_exited_thread_of_inferior (current_inferior ());
+      thread != nullptr)
+    return thread->ptid;
+
+  error (_("Could not find a non-exited thread to read /proc from."));
 }
 
 /* This is how we want PTIDs from core files to be printed.  */
@@ -800,9 +865,7 @@ static void
 linux_info_proc (struct gdbarch *gdbarch, const char *args,
 		 enum info_proc_what what)
 {
-  /* A long is used for pid instead of an int to avoid a loss of precision
-     compiler warning from the output of strtoul.  */
-  long pid;
+  ptid_t ptid;
   int cmdline_f = (what == IP_MINIMAL || what == IP_CMDLINE || what == IP_ALL);
   int cwd_f = (what == IP_MINIMAL || what == IP_CWD || what == IP_ALL);
   int environ_f = (what == IP_ENVIRON || what == IP_ALL);
@@ -817,7 +880,16 @@ linux_info_proc (struct gdbarch *gdbarch, const char *args,
     {
       char *tem;
 
-      pid = strtoul (args, &tem, 10);
+      /* A long is used for pid instead of an int to avoid a loss of precision
+	 compiler warning from the output of strtoul.  */
+      long pid = strtoul (args, &tem, 10);
+
+      /* ptid_t holds the pid as an int, so reject anything that would not
+	 fit an int.  */
+      if (pid > INT_MAX)
+	error (_("Invalid process id: %s"), args);
+
+      ptid = ptid_t (pid, pid);
       args = tem;
     }
   else
@@ -827,17 +899,22 @@ linux_info_proc (struct gdbarch *gdbarch, const char *args,
       if (current_inferior ()->fake_pid_p)
 	error (_("Can't determine the current process's PID: you must name one."));
 
-      pid = current_inferior ()->pid;
+      ptid = get_ptid_for_slash_proc ();
     }
 
   args = skip_spaces (args);
   if (args && args[0])
     error (_("Too many parameters: %s"), args);
 
-  gdb_printf (_("process %ld\n"), pid);
+  if (ptid.pid () == ptid.lwp ())
+    gdb_printf (_("Reading /proc for process %d\n"), ptid.pid ());
+  else
+    gdb_printf (_("Reading /proc for process %d (LWP %ld)\n"),
+		ptid.pid (), ptid.lwp ());
+
   if (cmdline_f)
     {
-      xsnprintf (filename, sizeof filename, "/proc/%ld/cmdline", pid);
+      xsnprintf (filename, sizeof filename, "/proc/%ld/cmdline", ptid.lwp ());
       gdb_byte *buffer;
       LONGEST len = target_fileio_read_alloc (nullptr, filename, &buffer);
 
@@ -859,7 +936,7 @@ linux_info_proc (struct gdbarch *gdbarch, const char *args,
     }
   if (cwd_f)
     {
-      xsnprintf (filename, sizeof filename, "/proc/%ld/cwd", pid);
+      xsnprintf (filename, sizeof filename, "/proc/%ld/cwd", ptid.lwp ());
       std::optional<std::string> contents
 	= target_fileio_readlink (NULL, filename, &target_errno);
       if (contents.has_value ())
@@ -869,7 +946,7 @@ linux_info_proc (struct gdbarch *gdbarch, const char *args,
     }
   if (environ_f)
     {
-      xsnprintf (filename, sizeof filename, "/proc/%ld/environ", pid);
+      xsnprintf (filename, sizeof filename, "/proc/%ld/environ", ptid.lwp ());
       gdb_byte *buffer;
       LONGEST len = target_fileio_read_alloc (nullptr, filename, &buffer);
 
@@ -893,7 +970,7 @@ linux_info_proc (struct gdbarch *gdbarch, const char *args,
     }
   if (exe_f)
     {
-      xsnprintf (filename, sizeof filename, "/proc/%ld/exe", pid);
+      xsnprintf (filename, sizeof filename, "/proc/%ld/exe", ptid.lwp ());
       std::optional<std::string> contents
 	= target_fileio_readlink (NULL, filename, &target_errno);
       if (contents.has_value ())
@@ -903,7 +980,7 @@ linux_info_proc (struct gdbarch *gdbarch, const char *args,
     }
   if (mappings_f)
     {
-      xsnprintf (filename, sizeof filename, "/proc/%ld/maps", pid);
+      xsnprintf (filename, sizeof filename, "/proc/%ld/maps", ptid.lwp ());
       gdb::unique_xmalloc_ptr<char> map
 	= target_fileio_read_stralloc (NULL, filename);
       if (map != NULL)
@@ -948,7 +1025,7 @@ linux_info_proc (struct gdbarch *gdbarch, const char *args,
     }
   if (status_f)
     {
-      xsnprintf (filename, sizeof filename, "/proc/%ld/status", pid);
+      xsnprintf (filename, sizeof filename, "/proc/%ld/status", ptid.lwp ());
       gdb::unique_xmalloc_ptr<char> status
 	= target_fileio_read_stralloc (NULL, filename);
       if (status)
@@ -958,7 +1035,7 @@ linux_info_proc (struct gdbarch *gdbarch, const char *args,
     }
   if (stat_f)
     {
-      xsnprintf (filename, sizeof filename, "/proc/%ld/stat", pid);
+      xsnprintf (filename, sizeof filename, "/proc/%ld/stat", ptid.lwp ());
       gdb::unique_xmalloc_ptr<char> statstr
 	= target_fileio_read_stralloc (NULL, filename);
       if (statstr)
@@ -1629,9 +1706,8 @@ linux_process_address_in_memtag_page (CORE_ADDR address)
   if (current_inferior ()->fake_pid_p)
     return false;
 
-  pid_t pid = current_inferior ()->pid;
-
-  std::string smaps_file = string_printf ("/proc/%d/smaps", pid);
+  ptid_t ptid = get_ptid_for_slash_proc ();
+  std::string smaps_file = string_printf ("/proc/%ld/smaps", ptid.lwp ());
 
   gdb::unique_xmalloc_ptr<char> data
     = target_fileio_read_stralloc (NULL, smaps_file.c_str ());
@@ -1689,7 +1765,6 @@ linux_find_memory_regions_full (struct gdbarch *gdbarch,
 				linux_dump_mapping_p_ftype *should_dump_mapping_p,
 				linux_find_memory_region_ftype func)
 {
-  pid_t pid;
   /* Default dump behavior of coredump_filter (0x33), according to
      Documentation/filesystems/proc.txt from the Linux kernel
      tree.  */
@@ -1702,12 +1777,12 @@ linux_find_memory_regions_full (struct gdbarch *gdbarch,
   if (current_inferior ()->fake_pid_p)
     return false;
 
-  pid = current_inferior ()->pid;
+  ptid_t ptid = get_ptid_for_slash_proc ();
 
   if (use_coredump_filter)
     {
       std::string core_dump_filter_name
-	= string_printf ("/proc/%d/coredump_filter", pid);
+	= string_printf ("/proc/%ld/coredump_filter", ptid.lwp ());
 
       gdb::unique_xmalloc_ptr<char> coredumpfilterdata
 	= target_fileio_read_stralloc (NULL, core_dump_filter_name.c_str ());
@@ -1721,7 +1796,7 @@ linux_find_memory_regions_full (struct gdbarch *gdbarch,
 	}
     }
 
-  std::string maps_filename = string_printf ("/proc/%d/smaps", pid);
+  std::string maps_filename = string_printf ("/proc/%ld/smaps", ptid.lwp ());
 
   gdb::unique_xmalloc_ptr<char> data
     = target_fileio_read_stralloc (NULL, maps_filename.c_str ());
@@ -1729,7 +1804,7 @@ linux_find_memory_regions_full (struct gdbarch *gdbarch,
   if (data == NULL)
     {
       /* Older Linux kernels did not support /proc/PID/smaps.  */
-      maps_filename = string_printf ("/proc/%d/maps", pid);
+      maps_filename = string_printf ("/proc/%ld/maps", ptid.lwp ());
       data = target_fileio_read_stralloc (NULL, maps_filename.c_str ());
 
       if (data == nullptr)
@@ -1991,7 +2066,7 @@ linux_corefile_parse_exec_context_1 (struct gdbarch *gdbarch, bfd *cbfd)
   /* Setup DEREF a helper function which loads a value from an address.
      The returned value is always placed into a uint64_t, even if we only
      load 4-bytes, this allows the code below to be pretty generic.  All
-     the values we're dealing with are unsigned, so this should be OK.   */
+     the values we're dealing with are unsigned, so this should be OK.  */
   enum bfd_endian byte_order = gdbarch_byte_order (gdbarch);
   const auto deref = [=] (CORE_ADDR p) -> uint64_t
     {
@@ -2232,8 +2307,6 @@ linux_fill_prpsinfo (struct elf_internal_linux_prpsinfo *p)
   const char *prog_state;
   /* The state of the process.  */
   char pr_sname;
-  /* The PID of the program which generated the corefile.  */
-  pid_t pid;
   /* Process flags.  */
   unsigned int pr_flag;
   /* Process nice value.  */
@@ -2243,9 +2316,20 @@ linux_fill_prpsinfo (struct elf_internal_linux_prpsinfo *p)
 
   gdb_assert (p != nullptr);
 
+  /* The kernel fills NT_PRPSINFO from the thread group leader, even it is a
+     zombie.  Do the same here, read the process state from the leader's proc
+     entries.
+
+     However, we can't read cmdline from the a zombie leader thread (it would
+     read empty).  Read that one from a thread that is still alive (this is
+     what the kernel does too).  It's the same value for the whole process, so
+     the choice of thread does not matter otherwise.  */
+  const int leader_id = current_inferior ()->pid;
+  const ptid_t live_ptid = get_ptid_for_slash_proc ();
+
   /* Obtaining PID and filename.  */
-  pid = inferior_ptid.pid ();
-  xsnprintf (filename, sizeof (filename), "/proc/%d/cmdline", (int) pid);
+  xsnprintf (filename, sizeof (filename), "/proc/%ld/cmdline",
+	     live_ptid.lwp ());
   /* The full name of the program which generated the corefile.  */
   gdb_byte *buf = nullptr;
   LONGEST buf_len = target_fileio_read_alloc (nullptr, filename, &buf);
@@ -2268,7 +2352,7 @@ linux_fill_prpsinfo (struct elf_internal_linux_prpsinfo *p)
   memset (p, 0, sizeof (*p));
 
   /* Defining the PID.  */
-  p->pr_pid = pid;
+  p->pr_pid = leader_id;
 
   /* Copying the program name.  Only the basename matters.  */
   basename = lbasename (fname.get ());
@@ -2285,7 +2369,7 @@ linux_fill_prpsinfo (struct elf_internal_linux_prpsinfo *p)
   strncpy (p->pr_psargs, psargs.c_str (), sizeof (p->pr_psargs) - 1);
   p->pr_psargs[sizeof (p->pr_psargs) - 1] = '\0';
 
-  xsnprintf (filename, sizeof (filename), "/proc/%d/stat", (int) pid);
+  xsnprintf (filename, sizeof (filename), "/proc/%d/stat", leader_id);
   /* The contents of `/proc/PID/stat'.  */
   gdb::unique_xmalloc_ptr<char> proc_stat_contents
     = target_fileio_read_stralloc (NULL, filename);
@@ -2363,7 +2447,7 @@ linux_fill_prpsinfo (struct elf_internal_linux_prpsinfo *p)
 
   /* Finally, obtaining the UID and GID.  For that, we read and parse the
      contents of the `/proc/PID/status' file.  */
-  xsnprintf (filename, sizeof (filename), "/proc/%d/status", (int) pid);
+  xsnprintf (filename, sizeof (filename), "/proc/%d/status", leader_id);
   /* The contents of `/proc/PID/status'.  */
   gdb::unique_xmalloc_ptr<char> proc_status_contents
     = target_fileio_read_stralloc (NULL, filename);
@@ -2905,7 +2989,9 @@ linux_infcall_mmap (CORE_ADDR size, unsigned prot)
   arg[ARG_FD] = value_from_longest (builtin_type (gdbarch)->builtin_int, -1);
   arg[ARG_OFFSET] = value_from_longest (builtin_type (gdbarch)->builtin_int64,
 					0);
-  addr_val = call_function_by_hand (mmap_val, NULL, arg);
+  addr_val = call_function_by_hand (mmap_val,
+				    builtin_type (gdbarch)->builtin_data_ptr,
+				    arg);
   retval = value_as_address (addr_val);
   if (retval == (CORE_ADDR) -1)
     error (_("Failed inferior mmap call for %s bytes, errno is changed."),
@@ -2934,7 +3020,9 @@ linux_infcall_munmap (CORE_ADDR addr, CORE_ADDR size)
   /* Assuming sizeof (unsigned long) == sizeof (size_t).  */
   arg[ARG_LENGTH] = value_from_ulongest
 		    (builtin_type (gdbarch)->builtin_unsigned_long, size);
-  retval_val = call_function_by_hand (munmap_val, NULL, arg);
+  retval_val = call_function_by_hand (munmap_val,
+				      builtin_type (gdbarch)->builtin_int,
+				      arg);
   retval = value_as_long (retval_val);
   if (retval != 0)
     warning (_("Failed inferior munmap call at %s for %s bytes, "
@@ -3095,6 +3183,44 @@ linux_get_hwcap2 ()
 			   current_inferior ()->arch ());
 }
 
+/* See linux-tdep.h.  */
+
+CORE_ADDR
+linux_get_hwcap3 (const std::optional<gdb::byte_vector> &auxv,
+		  target_ops *target, gdbarch *gdbarch)
+{
+  return linux_get_hwcap_helper (auxv, target, gdbarch, AT_HWCAP3);
+}
+
+/* See linux-tdep.h.  */
+
+CORE_ADDR
+linux_get_hwcap3 ()
+{
+  return linux_get_hwcap3 (target_read_auxv (),
+			   current_inferior ()->top_target (),
+			   current_inferior ()->arch ());
+}
+
+/* See linux-tdep.h.  */
+
+CORE_ADDR
+linux_get_hwcap4 (const std::optional<gdb::byte_vector> &auxv,
+		  target_ops *target, gdbarch *gdbarch)
+{
+  return linux_get_hwcap_helper (auxv, target, gdbarch, AT_HWCAP4);
+}
+
+/* See linux-tdep.h.  */
+
+CORE_ADDR
+linux_get_hwcap4 ()
+{
+  return linux_get_hwcap4 (target_read_auxv (),
+			   current_inferior ()->top_target (),
+			   current_inferior ()->arch ());
+}
+
 /* Display whether the gcore command is using the
    /proc/PID/coredump_filter file.  */
 
@@ -3126,9 +3252,8 @@ linux_address_in_shadow_stack_mem_range
   if (!target_has_execution () || current_inferior ()->fake_pid_p)
     return false;
 
-  const int pid = current_inferior ()->pid;
-
-  std::string smaps_file = string_printf ("/proc/%d/smaps", pid);
+  ptid_t ptid = get_ptid_for_slash_proc ();
+  std::string smaps_file = string_printf ("/proc/%ld/smaps", ptid.lwp ());
 
   gdb::unique_xmalloc_ptr<char> data
     = target_fileio_read_stralloc (nullptr, smaps_file.c_str ());

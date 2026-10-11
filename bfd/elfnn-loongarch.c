@@ -1133,11 +1133,12 @@ loongarch_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
       return true;
     }
 
+  if (htab->elf.dynobj == NULL
+      && !_bfd_elf_link_dynobj (info))
+    return false;
+
   symtab_hdr = &elf_symtab_hdr (abfd);
   sym_hashes = elf_sym_hashes (abfd);
-
-  if (htab->elf.dynobj == NULL)
-    htab->elf.dynobj = abfd;
 
   for (rel = relocs; rel < relocs + sec->reloc_count; rel++)
     {
@@ -1191,9 +1192,6 @@ loongarch_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 
       if (h && h->type == STT_GNU_IFUNC)
 	{
-	  if (htab->elf.dynobj == NULL)
-	    htab->elf.dynobj = abfd;
-
 	  /* Create 'irelifunc' in PIC object.  */
 	  if (bfd_link_pic (info)
 	      && !_bfd_elf_create_ifunc_sections (htab->elf.dynobj, info))
@@ -1555,8 +1553,7 @@ loongarch_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	  p = *head;
 	  if (p == NULL || p->sec != sec)
 	    {
-	      bfd_size_type amt = sizeof *p;
-	      p = (struct elf_dyn_relocs *) bfd_alloc (htab->elf.dynobj, amt);
+	      p = bfd_alloc (htab->elf.dynobj, sizeof (*p));
 	      if (p == NULL)
 		return false;
 	      p->next = *head;
@@ -2291,7 +2288,7 @@ record_relr_dyn_got_relocs (struct elf_link_hash_entry *h, void *inf)
     return true;
   if (h->type == STT_GNU_IFUNC && h->def_regular)
     return true;
-  if (h->got.refcount <= 0)
+  if (h->got.offset == (bfd_vma) -1)
     return true;
   if (loongarch_elf_hash_entry (h)->tls_type
       & (GOT_TLS_GD | GOT_TLS_IE | GOT_TLS_GDESC))
@@ -3513,6 +3510,19 @@ loongarch_resolve_pcrel_lo_relocs (loongarch_pcrel_relocs *p)
   return true;
 }
 
+static bfd_vma
+ifunc_got_off (struct elf_link_hash_table *htab,
+	       struct elf_link_hash_entry *h)
+{
+  bfd_vma idx =
+    (h->plt.offset - (htab->splt ? PLT_HEADER_SIZE : 0)) / PLT_ENTRY_SIZE;
+
+  return sec_addr (htab->splt ? htab->sgotplt : htab->igotplt)
+	 + (htab->splt ? GOTPLT_HEADER_SIZE : 0)
+	 + (idx * GOT_ENTRY_SIZE)
+	 - sec_addr (htab->sgot);
+}
+
 static int
 loongarch_elf_relocate_section (struct bfd_link_info *info,
 				bfd *input_bfd, asection *input_section,
@@ -4042,21 +4052,7 @@ loongarch_elf_relocate_section (struct bfd_link_info *info,
 		      abort();
 		    }
 
-		  bfd_vma plt_index = h->plt.offset / PLT_ENTRY_SIZE;
-		  off = plt_index * GOT_ENTRY_SIZE;
-
-		  if (htab->elf.splt != NULL)
-		    {
-		      /* Section .plt header is 2 times of plt entry.  */
-		      off = sec_addr (htab->elf.sgotplt) + off
-			- sec_addr (htab->elf.sgot);
-		    }
-		  else
-		    {
-		      /* Section iplt not has plt header.  */
-		      off = sec_addr (htab->elf.igotplt) + off
-			- sec_addr (htab->elf.sgot);
-		    }
+		  off = ifunc_got_off (&htab->elf, h);
 		}
 
 	      if ((h->got.offset & 1) == 0)
@@ -4539,25 +4535,7 @@ loongarch_elf_relocate_section (struct bfd_link_info *info,
 		  /* Hidden symbol not has got entry,
 		   * only got.plt entry so it is (plt - got).  */
 		  if (h->got.offset == MINUS_ONE && h->type == STT_GNU_IFUNC)
-		    {
-		      bfd_vma idx;
-		      if (htab->elf.splt != NULL)
-			{
-			  idx = (h->plt.offset - PLT_HEADER_SIZE)
-			    / PLT_ENTRY_SIZE;
-			  got_off = sec_addr (htab->elf.sgotplt)
-			    + GOTPLT_HEADER_SIZE
-			    + (idx * GOT_ENTRY_SIZE)
-			    - sec_addr (htab->elf.sgot);
-			}
-		      else
-			{
-			  idx = h->plt.offset / PLT_ENTRY_SIZE;
-			  got_off = sec_addr (htab->elf.sgotplt)
-			    + (idx * GOT_ENTRY_SIZE)
-			    - sec_addr (htab->elf.sgot);
-			}
-		    }
+		    got_off = ifunc_got_off (&htab->elf, h);
 
 		  if ((h->got.offset & 1) == 0)
 		    {
@@ -4638,18 +4616,7 @@ loongarch_elf_relocate_section (struct bfd_link_info *info,
 		got_off = local_got_offsets[r_symndx] & (~(bfd_vma)1);
 
 	      if (h && h->got.offset == MINUS_ONE && h->type == STT_GNU_IFUNC)
-		{
-		  bfd_vma idx;
-		  if (htab->elf.splt != NULL)
-		    idx = (h->plt.offset - PLT_HEADER_SIZE) / PLT_ENTRY_SIZE;
-		  else
-		    idx = h->plt.offset / PLT_ENTRY_SIZE;
-
-		  got_off = sec_addr (htab->elf.sgotplt)
-		    + GOTPLT_HEADER_SIZE
-		    + (idx * GOT_ENTRY_SIZE)
-		    - sec_addr (htab->elf.sgot);
-		}
+		got_off = ifunc_got_off (&htab->elf, h);
 
 	      relocation = got_off + sec_addr (got);
 	    }
@@ -7230,7 +7197,7 @@ elfNN_loongarch_size_aligns (bfd *output_bfd,
 #define elf_backend_finish_relative_relocs \
   loongarch_elf_finish_relative_relocs
 #define bfd_elfNN_new_section_hook loongarch_elf_new_section_hook
-
+#define elf_backend_want_stub_bfd      1
 #define elf_backend_dtrel_excludes_plt 1
 
 #include "elfNN-target.h"

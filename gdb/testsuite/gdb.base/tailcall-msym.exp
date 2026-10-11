@@ -23,6 +23,9 @@
 # and to create a fake function symbol that sits immediately after the
 # tail call function.
 
+# The dummy function doesn't compile on cygwin.
+require {!istarget *-*-cygwin*}
+
 standard_testfile
 
 # Compile with debug info first so we can find the instruction boundaries.
@@ -130,6 +133,25 @@ close $fd
 # include debug as we want GDB to use the msymbols.
 if { [prepare_for_testing "prepare" ${testfile}-updated $asm_file {nodebug}] } {
     return
+}
+
+foreach func {caller callee main dummy_func} {
+    set re_found \
+	"^$valnum_re = {<text variable, no debug info>} $hex <$func>"
+
+    set found 0
+    gdb_test_multiple "p $func" "" {
+       -re -wrap $re_found {
+	   set found 1
+       }
+       -re -wrap "" {
+       }
+    }
+
+    if {!$found} {
+       unsupported "couldn't find function $func"
+       return
+    }
 }
 
 if {![runto callee]} {

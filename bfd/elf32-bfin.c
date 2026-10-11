@@ -1227,11 +1227,13 @@ bfin_check_relocs (bfd * abfd,
 
 	  if (dynobj == NULL)
 	    {
-	      /* Create the .got section.  */
-	      elf_hash_table (info)->dynobj = dynobj = abfd;
-	      if (!_bfd_elf_create_got_section (dynobj, info))
+	      dynobj = _bfd_elf_link_dynobj (info);
+	      if (dynobj == NULL)
 		return false;
 	    }
+
+	  if (!_bfd_elf_create_got_section (dynobj, info))
+	    return false;
 
 	  sgot = elf_hash_table (info)->sgot;
 	  srelgot = elf_hash_table (info)->srelgot;
@@ -4036,7 +4038,6 @@ elf32_bfinfdpic_late_size_sections (struct bfd_link_info *info)
   struct elf_link_hash_table *htab;
   bfd *dynobj;
   asection *s;
-  struct _bfinfdpic_dynamic_got_plt_info gpinfo;
 
   htab = elf_hash_table (info);
   dynobj = htab->dynobj;
@@ -4056,28 +4057,33 @@ elf32_bfinfdpic_late_size_sections (struct bfd_link_info *info)
 	}
     }
 
-  memset (&gpinfo, 0, sizeof (gpinfo));
-  gpinfo.g.info = info;
-
-  for (;;)
+  if (bfinfdpic_relocs_info (info))
     {
-      htab_t relocs = bfinfdpic_relocs_info (info);
+      struct _bfinfdpic_dynamic_got_plt_info gpinfo;
+      memset (&gpinfo, 0, sizeof (gpinfo));
+      gpinfo.g.info = info;
 
-      htab_traverse (relocs, _bfinfdpic_resolve_final_relocs_info, &relocs);
+      for (;;)
+	{
+	  htab_t relocs = bfinfdpic_relocs_info (info);
 
-      if (relocs == bfinfdpic_relocs_info (info))
-	break;
+	  htab_traverse (relocs, _bfinfdpic_resolve_final_relocs_info, &relocs);
+
+	  if (relocs == bfinfdpic_relocs_info (info))
+	    break;
+	}
+
+      htab_traverse (bfinfdpic_relocs_info (info),
+		     _bfinfdpic_count_got_plt_entries, &gpinfo.g);
+
+      /* Allocate space to save the summary information, we're going to
+	 use it if we're doing relaxations.  */
+      bfinfdpic_dynamic_got_plt_info (info) = bfd_alloc (dynobj,
+							 sizeof (gpinfo.g));
+
+      if (!_bfinfdpic_size_got_plt (info->output_bfd, &gpinfo))
+	return false;
     }
-
-  htab_traverse (bfinfdpic_relocs_info (info), _bfinfdpic_count_got_plt_entries,
-		 &gpinfo.g);
-
-  /* Allocate space to save the summary information, we're going to
-     use it if we're doing relaxations.  */
-  bfinfdpic_dynamic_got_plt_info (info) = bfd_alloc (dynobj, sizeof (gpinfo.g));
-
-  if (!_bfinfdpic_size_got_plt (info->output_bfd, &gpinfo))
-      return false;
 
   s = bfd_get_linker_section (dynobj, ".dynbss");
   if (s && s->size == 0)
@@ -4216,11 +4222,6 @@ static bool
 elf32_bfinfdpic_finish_dynamic_sections (struct bfd_link_info *info,
 					 bfd_byte *buf ATTRIBUTE_UNUSED)
 {
-  bfd *dynobj;
-  asection *sdyn;
-
-  dynobj = elf_hash_table (info)->dynobj;
-
   if (bfinfdpic_got_section (info))
     {
       BFD_ASSERT (bfinfdpic_gotrel_section (info)->size
@@ -4260,12 +4261,11 @@ elf32_bfinfdpic_finish_dynamic_sections (struct bfd_link_info *info,
 		      * sizeof (Elf32_External_Rel)));
     }
 
-  sdyn = bfd_get_linker_section (dynobj, ".dynamic");
-
   if (elf_hash_table (info)->dynamic_sections_created)
     {
-      Elf32_External_Dyn * dyncon;
-      Elf32_External_Dyn * dynconend;
+      bfd *dynobj = elf_hash_table (info)->dynobj;
+      asection *sdyn = bfd_get_linker_section (dynobj, ".dynamic");
+      Elf32_External_Dyn *dyncon, *dynconend;
 
       BFD_ASSERT (sdyn != NULL);
 
@@ -4558,13 +4558,18 @@ bfinfdpic_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	case R_BFIN_PCREL24:
 	case R_BFIN_PCREL24_JUMP_L:
 	case R_BFIN_BYTE4_DATA:
-	  if (IS_FDPIC (abfd) && ! dynobj)
+	  if (IS_FDPIC (abfd))
 	    {
-	      elf_hash_table (info)->dynobj = dynobj = abfd;
-	      if (! _bfin_create_got_section (abfd, info))
+	      if (dynobj == NULL)
+		{
+		  dynobj = _bfd_elf_link_dynobj (info);
+		  if (dynobj == NULL)
+		    return false;
+		}
+	      if (!_bfin_create_got_section (dynobj, info))
 		return false;
 	    }
-	  if (! IS_FDPIC (abfd))
+	  else
 	    {
 	      picrel = NULL;
 	      break;
@@ -4859,15 +4864,10 @@ static bool
 bfin_finish_dynamic_sections (struct bfd_link_info *info,
 			      bfd_byte *buf ATTRIBUTE_UNUSED)
 {
-  bfd *dynobj;
-  asection *sdyn;
-
-  dynobj = elf_hash_table (info)->dynobj;
-
-  sdyn = bfd_get_linker_section (dynobj, ".dynamic");
-
   if (elf_hash_table (info)->dynamic_sections_created)
     {
+      bfd *dynobj = elf_hash_table (info)->dynobj;
+      asection *sdyn = bfd_get_linker_section (dynobj, ".dynamic");
       Elf32_External_Dyn *dyncon, *dynconend;
 
       BFD_ASSERT (sdyn != NULL);

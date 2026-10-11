@@ -1100,13 +1100,13 @@ score_elf_got_info (bfd *abfd, asection **sgotp)
   struct score_got_info *g;
 
   sgot = score_elf_got_section (abfd, true);
-  BFD_ASSERT (sgot != NULL);
-  BFD_ASSERT (elf_section_data (sgot) != NULL);
-  g = score_elf_section_data (sgot)->u.got_info;
-  BFD_ASSERT (g != NULL);
-
   if (sgotp)
     *sgotp = sgot;
+
+  g = NULL;
+  if (sgot != NULL)
+    g = score_elf_section_data (sgot)->u.got_info;
+
   return g;
 }
 
@@ -2871,7 +2871,11 @@ s3_bfd_score_elf_check_relocs (bfd *abfd,
 	    case R_SCORE_GOT15:
 	    case R_SCORE_CALL15:
 	      if (dynobj == NULL)
-		elf_hash_table (info)->dynobj = dynobj = abfd;
+		{
+		  dynobj = _bfd_elf_link_dynobj (info);
+		  if (dynobj == NULL)
+		    return false;
+		}
 	      if (!score_elf_create_got_section (dynobj, info, false))
 		return false;
 	      g = score_elf_got_info (dynobj, &sgot);
@@ -2881,7 +2885,11 @@ s3_bfd_score_elf_check_relocs (bfd *abfd,
 	      if (dynobj == NULL
 		  && (bfd_link_pic (info) || h != NULL)
 		  && (sec->flags & SEC_ALLOC) != 0)
-		elf_hash_table (info)->dynobj = dynobj = abfd;
+		{
+		  dynobj = _bfd_elf_link_dynobj (info);
+		  if (dynobj == NULL)
+		    return false;
+		}
 	      break;
 	    default:
 	      break;
@@ -2967,7 +2975,11 @@ s3_bfd_score_elf_check_relocs (bfd *abfd,
 	      if (h != NULL)
 		{
 		  if (dynobj == NULL)
-		    elf_hash_table (info)->dynobj = dynobj = abfd;
+		    {
+		      dynobj = _bfd_elf_link_dynobj (info);
+		      if (dynobj == NULL)
+			return false;
+		    }
 		  if (! score_elf_create_got_section (dynobj, info, true))
 		    return false;
 		  g = score_elf_got_info (dynobj, &sgot);
@@ -3194,7 +3206,6 @@ s3_bfd_score_elf_early_size_sections (struct bfd_link_info *info)
 
   dynobj = elf_hash_table (info)->dynobj;
   if (dynobj == NULL)
-    /* Relocatable links don't have it.  */
     return true;
 
   g = score_elf_got_info (dynobj, &s);

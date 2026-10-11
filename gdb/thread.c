@@ -666,13 +666,17 @@ first_thread_of_inferior (inferior *inf)
 }
 
 thread_info *
-any_thread_of_inferior (inferior *inf)
+any_non_exited_thread_of_inferior (inferior *inf)
 {
   gdb_assert (inf->pid != 0);
 
-  /* Prefer the current thread, if there's one.  */
+  /* Prefer the current thread, if there's one and it hasn't exited.  */
   if (inf == current_inferior () && inferior_ptid != null_ptid)
-    return inferior_thread ();
+    {
+      if (thread_info *curr_thr = inferior_thread ();
+	  curr_thr->state () != THREAD_EXITED)
+	return curr_thr;
+    }
 
   for (thread_info &tp : inf->non_exited_threads ())
     return &tp;

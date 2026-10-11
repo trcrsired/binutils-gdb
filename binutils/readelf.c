@@ -1723,6 +1723,20 @@ is_aarch64_special_symbol_name (const char *name)
   return name[2] == 0 || name[2] == '.';
 }
 
+/* See riscv_elf_is_mapping_symbols.  */
+
+static bool
+is_riscv_special_symbol_name (const char *name)
+{
+  return (!strcmp (name, "$d")
+	  || !strcmp (name, "$x")
+	  || !strncmp (name, "$xrv", 4)
+	  /* Only used for counting gp in risc-v.  */
+	  || !strcmp (name, "__DATA_BEGIN__")
+	  || !strcmp (name, "__SDATA_BEGIN__")
+	  || !strcmp (name, "__BSS_END__"));
+}
+
 static bool
 is_special_symbol_name (Filedata * filedata, const char * s)
 {
@@ -1730,6 +1744,9 @@ is_special_symbol_name (Filedata * filedata, const char * s)
     {
     case EM_AARCH64:
       return is_aarch64_special_symbol_name (s);
+
+    case EM_RISCV:
+      return is_riscv_special_symbol_name (s);
 
     default:
       return false;
@@ -15700,7 +15717,8 @@ is_32bit_abs_reloc (Filedata * filedata, unsigned int reloc_type)
       return reloc_type == 1; /* R_XSTROMY16_32.  */
     case EM_XTENSA_OLD:
     case EM_XTENSA:
-      return reloc_type == 1; /* R_XTENSA_32.  */
+      /* R_XTENSA_32 or R_XTENSA_32_ABS.  */
+      return reloc_type == 1 || reloc_type == 64;
     case EM_Z80:
       return reloc_type == 6; /* R_Z80_32.  */
     default:
@@ -16271,7 +16289,8 @@ is_none_reloc (Filedata * filedata, unsigned int reloc_type)
 	      || reloc_type == 59  /* R_XTENSA_PDIFF32.  */
 	      || reloc_type == 60  /* R_XTENSA_NDIFF8.  */
 	      || reloc_type == 61  /* R_XTENSA_NDIFF16.  */
-	      || reloc_type == 62  /* R_XTENSA_NDIFF32.  */);
+	      || reloc_type == 62  /* R_XTENSA_NDIFF32.  */
+	      || reloc_type == 63  /* R_XTENSA_PDIFF_ULEB128.  */);
     }
   return false;
 }
@@ -16597,24 +16616,13 @@ static bool
 uncompress_section_contents (bool              is_zstd,
 			     unsigned char **  buffer,
 			     uint64_t          uncompressed_size,
-			     uint64_t *        size,
-			     uint64_t          file_size)
+			     uint64_t *        size)
 {
   uint64_t compressed_size = *size;
   unsigned char *compressed_buffer = *buffer;
   unsigned char *uncompressed_buffer = NULL;
   z_stream strm;
   int rc;
-
-  /* Similar to bfd_section_size_insane() in the BFD library we expect an
-     upper limit of ~10x compression.  Any compression larger than that is
-     thought to be due to fuzzing of the compression header.  */
-  if (uncompressed_size > file_size * 10)
-    {
-      error (_("Uncompressed section size is suspiciously large: 0x%" PRIu64 "\n"),
-	       uncompressed_size);
-      goto fail;
-    }
 
   uncompressed_buffer = xmalloc (uncompressed_size);
 
@@ -16732,7 +16740,7 @@ maybe_expand_or_relocate_section (Elf_Internal_Shdr *  section,
       if (uncompressed_size)
 	{
 	  if (uncompress_section_contents (is_zstd, &start, uncompressed_size,
-					   &new_size, filedata->file_size))
+					   &new_size))
 	    {
 	      *decomp_buf = start;
 	      section_size = new_size;
@@ -17315,7 +17323,7 @@ load_specific_debug_section (enum dwarf_section_display_enum  debug,
       if (uncompressed_size)
 	{
 	  if (uncompress_section_contents (is_zstd, &start, uncompressed_size,
-					   &size, filedata->file_size))
+					   &size))
 	    {
 	      /* Free the compressed buffer, update the section buffer
 		 and the section size if uncompress is successful.  */
@@ -18363,6 +18371,56 @@ display_arm_attribute (const unsigned char * p,
     }
 
   return display_tag_value (tag, p, end);
+}
+
+static const unsigned char *
+display_avr_gnu_attribute (const unsigned char * p,
+			   unsigned int tag,
+			   const unsigned char * const end)
+{
+  unsigned int val;
+
+  switch (tag)
+    {
+    default:
+      break;
+
+    case Tag_GNU_AVR_VTABLE_AS:
+      printf ("  Tag_GNU_AVR_VTABLE_AS (%u): ", tag);
+      if (p == end)
+	{
+	  printf (_("<corrupt>\n"));
+	  return p;
+	}
+
+      READ_ULEB (val, p, end);
+      printf ("%d (%s)\n", val, avr_tag_vtable_as_name (val));
+      return p;
+
+    case Tag_GNU_AVR_BITS_DOUBLE:
+      printf ("  Tag_GNU_AVR_BITS_DOUBLE (%u): ", tag);
+      if (p == end)
+	printf (_("<corrupt>\n"));
+      else
+	{
+	  READ_ULEB (val, p, end);
+	  printf ("%d\n", val);
+	}
+      return p;
+
+    case Tag_GNU_AVR_BITS_LONG_DOUBLE:
+      printf ("  Tag_GNU_AVR_BITS_LONG_DOUBLE (%u): ", tag);
+      if (p == end)
+	printf (_("<corrupt>\n"));
+      else
+	{
+	  READ_ULEB (val, p, end);
+	  printf ("%d\n", val);
+	}
+      return p;
+    }
+
+  return display_tag_value (tag & 1, p, end);
 }
 
 static const unsigned char *
@@ -21400,6 +21458,8 @@ get_note_type (Filedata * filedata, unsigned e_type)
 	return _("NT_PPC_TM_CPPR (ppc checkpointed PPR register)");
       case NT_PPC_TM_CDSCR:
 	return _("NT_PPC_TM_CDSCR (ppc checkpointed DSCR register)");
+      case NT_PPC_DMR:
+	return _("NT_PPC_DMR (ppc Dense Math registers)");
       case NT_386_TLS:
 	return _("NT_386_TLS (x86 TLS information)");
       case NT_386_IOPERM:
@@ -21474,6 +21534,12 @@ get_note_type (Filedata * filedata, unsigned e_type)
 	return _("NT_ARC_V2 (ARC HS accumulator/extra registers)");
       case NT_RISCV_CSR:
 	return _("NT_RISCV_CSR (RISC-V control and status registers)");
+      case NT_RISCV_VECTOR:
+	return _("NT_RISCV_VECTOR (RISC-V vector registers)");
+      case NT_RISCV_TAGGED_ADDR_CTRL:
+	return _("NT_RISCV_TAGGED_ADDR_CTRL (RISC-V tagged address control (prctl()))");
+      case NT_RISCV_USER_CFI:
+	return _("NT_RISCV_USER_CFI (RISC-V shadow stack state)");
       case NT_PSTATUS:
 	return _("NT_PSTATUS (pstatus structure)");
       case NT_FPREGS:
@@ -22749,7 +22815,7 @@ print_stapsdt_note (Elf_Internal_Note *pnote)
   char *provider, *probe, *arg_fmt;
 
   if (pnote->descsz < (addr_size * 3))
-    goto stapdt_note_too_small;
+    goto too_small;
 
   pc = byte_get ((unsigned char *) data, addr_size);
   data += addr_size;
@@ -22761,7 +22827,7 @@ print_stapsdt_note (Elf_Internal_Note *pnote)
   data += addr_size;
 
   if (data >= data_end)
-    goto stapdt_note_too_small;
+    goto too_small;
   maxlen = data_end - data;
   len = strnlen (data, maxlen);
   if (len < maxlen)
@@ -22770,10 +22836,10 @@ print_stapsdt_note (Elf_Internal_Note *pnote)
       data += len + 1;
     }
   else
-    goto stapdt_note_too_small;
+    goto too_small;
 
   if (data >= data_end)
-    goto stapdt_note_too_small;
+    goto too_small;
   maxlen = data_end - data;
   len = strnlen (data, maxlen);
   if (len < maxlen)
@@ -22782,10 +22848,10 @@ print_stapsdt_note (Elf_Internal_Note *pnote)
       data += len + 1;
     }
   else
-    goto stapdt_note_too_small;
+    goto too_small;
 
   if (data >= data_end)
-    goto stapdt_note_too_small;
+    goto too_small;
   maxlen = data_end - data;
   len = strnlen (data, maxlen);
   if (len < maxlen)
@@ -22794,7 +22860,7 @@ print_stapsdt_note (Elf_Internal_Note *pnote)
       data += len + 1;
     }
   else
-    goto stapdt_note_too_small;
+    goto too_small;
 
   printf (_("    Provider: %s\n"), provider);
   printf (_("    Name: %s\n"), probe);
@@ -22809,9 +22875,9 @@ print_stapsdt_note (Elf_Internal_Note *pnote)
 
   return data == data_end;
 
- stapdt_note_too_small:
+ too_small:
   printf (_("  <corrupt - note is too small>\n"));
-  error (_("corrupt stapdt note - the data size is too small\n"));
+  error (_("corrupt stapsdt note - the data size is too small\n"));
   return false;
 }
 
@@ -24166,6 +24232,10 @@ process_arch_specific (Filedata * filedata)
     case EM_AARCH64:
       return process_attributes_v2 (filedata, "aeabi", SHT_AARCH64_ATTRIBUTES,
 				    display_aarch64_attribute);
+
+    case EM_AVR:
+      return process_attributes (filedata, NULL, SHT_GNU_ATTRIBUTES, NULL,
+				 display_avr_gnu_attribute);
 
     case EM_MIPS:
     case EM_MIPS_RS3_LE:

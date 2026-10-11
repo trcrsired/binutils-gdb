@@ -117,7 +117,6 @@ exp_print_token (token_code_type code, int infix_p)
     { DEFINED, "DEFINED" },
     { TARGET_K, "TARGET" },
     { SEARCH_DIR, "SEARCH_DIR" },
-    { MAP, "MAP" },
     { ENTRY, "ENTRY" },
     { NEXT, "NEXT" },
     { ALIGNOF, "ALIGNOF" },
@@ -1301,7 +1300,7 @@ exp_fold_tree_1 (etree_type *tree)
 			{
 			  bfd_copy_link_hash_symbol_type (link_info.output_bfd,
 							  h, expld.assign_src);
-			  expld.assign_src->non_ir_ref_regular = true;
+			  ldlang_ref (expld.assign_src);
 			}
 		    }
 		}

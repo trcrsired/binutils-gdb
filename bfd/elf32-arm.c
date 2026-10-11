@@ -6796,7 +6796,7 @@ elf32_arm_size_stubs (bfd *output_bfd,
 	   stub_sec = stub_sec->next)
 	{
 	  /* Ignore non-stub sections.  */
-	  if (!strstr (stub_sec->name, STUB_SUFFIX))
+	  if ((stub_sec->flags & SEC_LINKER_CREATED) != 0)
 	    continue;
 
 	  stub_sec->size = 0;
@@ -6943,7 +6943,7 @@ elf32_arm_build_stubs (struct bfd_link_info *info)
       bfd_size_type size;
 
       /* Ignore non-stub sections.  */
-      if (!strstr (stub_sec->name, STUB_SUFFIX))
+      if ((stub_sec->flags & SEC_LINKER_CREATED) != 0)
 	continue;
 
       /* Allocate memory to hold the linker stubs.  Zeroing the stub sections
@@ -13669,6 +13669,19 @@ elf32_arm_final_link (bfd *abfd, struct bfd_link_info *info)
 	}
     }
 
+  /* Process CMSE stubs (they are not part of the stub_group above).  */
+  if (htab->cmse_stub_sec != NULL)
+    {
+      sec = htab->cmse_stub_sec;
+      osec = sec->output_section;
+
+      elf32_arm_write_section (abfd, info, sec, sec->contents);
+
+      if (!bfd_set_section_contents (abfd, osec, sec->contents,
+				     sec->output_offset, sec->size))
+	return false;
+    }
+
   /* Write out any glue sections now that we have created all the
      stubs.  */
   if (globals->bfd_of_glue_owner != NULL)
@@ -15216,13 +15229,12 @@ elf32_arm_check_relocs (bfd *abfd, struct bfd_link_info *info,
     return false;
 
   sreloc = NULL;
-
-  if (htab->root.dynobj == NULL)
-    htab->root.dynobj = abfd;
-  if (!create_ifunc_sections (info))
+  dynobj = _bfd_elf_link_dynobj (info);
+  if (dynobj == NULL)
     return false;
 
-  dynobj = htab->root.dynobj;
+  if (!create_ifunc_sections (info))
+    return false;
 
   symtab_hdr = & elf_symtab_hdr (abfd);
   sym_hashes = elf_sym_hashes (abfd);
@@ -15429,7 +15441,7 @@ elf32_arm_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	  case R_ARM_GOTOFF32:
 	  case R_ARM_GOTPC:
 	    if (htab->root.sgot == NULL
-		&& !create_got_section (htab->root.dynobj, info))
+		&& !create_got_section (dynobj, info))
 	      return false;
 	    break;
 
@@ -15594,9 +15606,8 @@ elf32_arm_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	  /* Create a reloc section in dynobj.  */
 	  if (sreloc == NULL)
 	    {
-	      sreloc = _bfd_elf_make_dynamic_reloc_section
-		(sec, dynobj, 2, abfd, ! htab->use_rel);
-
+	      sreloc = _bfd_elf_make_dynamic_reloc_section (sec, dynobj, 2, abfd,
+							    !htab->use_rel);
 	      if (sreloc == NULL)
 		return false;
 	    }
@@ -15615,9 +15626,7 @@ elf32_arm_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	  p = *head;
 	  if (p == NULL || p->sec != sec)
 	    {
-	      size_t amt = sizeof *p;
-
-	      p = (struct elf_dyn_relocs *) bfd_alloc (htab->root.dynobj, amt);
+	      p = bfd_alloc (dynobj, sizeof (*p));
 	      if (p == NULL)
 		return false;
 	      p->next = *head;
@@ -17034,7 +17043,7 @@ elf32_arm_late_size_sections (struct bfd_link_info *info)
 	continue;
 
       /* Allocate memory for the section contents.  */
-      s->contents = (unsigned char *) bfd_zalloc (dynobj, s->size);
+      s->contents = bfd_zalloc (dynobj, s->size);
       if (s->contents == NULL)
 	return false;
       s->alloced = 1;
@@ -18121,26 +18130,21 @@ elf32_arm_output_arch_local_syms (struct bfd_link_info *info,
       elf32_arm_output_map_sym (&osi, ARM_MAP_ARM, 0);
     }
 
-  /* Long calls stubs.  */
-  if (htab->stub_bfd && htab->stub_bfd->sections)
+  /* Long call stubs.  */
+  for (asection* stub_sec = htab->stub_bfd->sections;
+       stub_sec != NULL;
+       stub_sec = stub_sec->next)
     {
-      asection* stub_sec;
+      /* Ignore non-stub sections.  */
+      if ((stub_sec->flags & SEC_LINKER_CREATED) != 0)
+	continue;
 
-      for (stub_sec = htab->stub_bfd->sections;
-	   stub_sec != NULL;
-	   stub_sec = stub_sec->next)
-	{
-	  /* Ignore non-stub sections.  */
-	  if (!strstr (stub_sec->name, STUB_SUFFIX))
-	    continue;
+      osi.sec = stub_sec;
 
-	  osi.sec = stub_sec;
+      osi.sec_shndx = _bfd_elf_section_from_bfd_section
+	(info->output_bfd, osi.sec->output_section);
 
-	  osi.sec_shndx = _bfd_elf_section_from_bfd_section
-	    (info->output_bfd, osi.sec->output_section);
-
-	  bfd_hash_traverse (&htab->stub_hash_table, arm_map_one_stub, &osi);
-	}
+      bfd_hash_traverse (&htab->stub_hash_table, arm_map_one_stub, &osi);
     }
 
   /* Finally, output mapping symbols for the PLT.  */
@@ -18258,9 +18262,13 @@ elf32_arm_filter_cmse_symbols (struct bfd_link_info *info,
   char *cmse_name;
   size_t src_count, dst_count = 0;
   struct elf32_arm_link_hash_table *htab;
+  asection *stub_sec;
 
   htab = elf32_arm_hash_table (info);
-  if (!htab->stub_bfd || !htab->stub_bfd->sections)
+  for (stub_sec = htab->stub_bfd->sections; stub_sec; stub_sec = stub_sec->next)
+    if (!(stub_sec->flags & SEC_LINKER_CREATED))
+      break;
+  if (!stub_sec)
     symcount = 0;
 
   maxnamelen = 128;
@@ -20213,6 +20221,7 @@ elf32_arm_backend_symbol_processing (bfd *abfd, asymbol *sym)
 #define elf_backend_want_got_plt       1
 #define elf_backend_want_plt_sym       0
 #define elf_backend_want_dynrelro      1
+#define elf_backend_want_stub_bfd      1
 #define elf_backend_may_use_rel_p      1
 #define elf_backend_may_use_rela_p     0
 #define elf_backend_default_use_rela_p 0

@@ -54,10 +54,6 @@ struct builtin_d_type
   struct type *builtin_dchar = nullptr;
 };
 
-/* Defined in d-exp.y.  */
-
-extern int d_parse (struct parser_state *);
-
 /* Defined in d-lang.c  */
 
 extern const char *d_main_name (void);
@@ -82,6 +78,6 @@ extern struct block_symbol d_lookup_nested_symbol (struct type *, const char *,
 
 extern void d_value_print_inner (struct value *val,
 				 struct ui_file *stream, int recurse,
-				 const struct value_print_options *options);
+				 const value_print_options &options);
 
 #endif /* GDB_D_LANG_H */

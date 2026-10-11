@@ -236,7 +236,7 @@ gdbpy_create_lazy_string_object (CORE_ADDR address, long length,
     str_obj->encoding = xstrdup (encoding);
   str_obj->type = type_to_type_object (type).release ();
 
-  return (PyObject *) str_obj;
+  return str_obj;
 }
 
 static int
@@ -305,8 +305,7 @@ stpy_str (PyObject *self)
 {
   lazy_string_object *str = (lazy_string_object *) self;
 
-  struct value_print_options opts;
-  get_user_print_options (&opts);
+  value_print_options opts = get_user_print_options ();
   opts.addressprint = false;
 
   string_file stream;
@@ -314,7 +313,7 @@ stpy_str (PyObject *self)
     {
       struct type *type = stpy_lazy_string_elt_type (str);
       val_print_string (type, str->encoding, str->address, str->length,
-			&stream, &opts);
+			&stream, opts);
     }
   catch (const gdb_exception &exc)
     {
