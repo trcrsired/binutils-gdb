@@ -1864,7 +1864,7 @@ set_symtab (void)
 #endif
 #endif
 
-void
+static void
 subsegs_finish_section (asection *s)
 {
   struct frchain *frchainP;
