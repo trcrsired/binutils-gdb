@@ -39,8 +39,11 @@
    around technique as above.  */
 #undef _FILE_OFFSET_BITS
 
-/* A kludge to avoid redefinition of snprintf on Windows by pyerrors.h.  */
-#if defined(_WIN32) && defined(HAVE_DECL_SNPRINTF)
+/* A kludge to avoid redefinition of snprintf on Windows by pyerrors.h.
+
+   This is only needed for Python <= 3.8, so it can go once support for those
+   Python versions is dropped.  */
+#ifdef _WIN32
 #define HAVE_SNPRINTF 1
 #endif
 
@@ -527,7 +530,8 @@ extern PyObject *gdbpy_history_count (PyObject *self, PyObject *args);
 PyObject *gdbpy_convenience_variable (PyObject *self, PyObject *args);
 PyObject *gdbpy_set_convenience_variable (PyObject *self, PyObject *args);
 PyObject *gdbpy_breakpoints (PyObject *, PyObject *);
-PyObject *gdbpy_frame_stop_reason_string (PyObject *, PyObject *);
+const char *gdbpy_frame_stop_reason_string (gdbpy_borrowed_ref<> args,
+					    gdbpy_opt_borrowed_ref<> kw);
 gdbpy_ref<> gdbpy_lookup_symbol (gdbpy_borrowed_ref<> args,
 				 gdbpy_opt_borrowed_ref<> kw);
 gdbpy_ref<> gdbpy_lookup_global_symbol (gdbpy_borrowed_ref<> args,
@@ -539,8 +543,8 @@ gdbpy_ref<> gdbpy_lookup_static_symbols (gdbpy_borrowed_ref<> args,
 PyObject *gdbpy_start_recording (PyObject *self, PyObject *args);
 PyObject *gdbpy_current_recording (PyObject *self, PyObject *args);
 PyObject *gdbpy_stop_recording (PyObject *self, PyObject *args);
-PyObject *gdbpy_newest_frame (PyObject *self, PyObject *args);
-PyObject *gdbpy_selected_frame (PyObject *self, PyObject *args);
+gdbpy_ref<> gdbpy_newest_frame ();
+gdbpy_ref<> gdbpy_selected_frame ();
 PyObject *gdbpy_lookup_type (PyObject *self, PyObject *args, PyObject *kw);
 int gdbpy_is_field (PyObject *obj);
 PyObject *gdbpy_create_lazy_string_object (CORE_ADDR address, long length,
@@ -603,7 +607,7 @@ PyObject *gdbpy_buffer_to_membuf (gdb::unique_xmalloc_ptr<gdb_byte> buffer,
 
 struct process_stratum_target;
 gdbpy_ref<> target_to_connection_object (process_stratum_target *target);
-PyObject *gdbpy_connections (PyObject *self, PyObject *args);
+gdbpy_ref<> gdbpy_connections ();
 
 const struct block *block_object_to_block (PyObject *obj);
 struct symbol *symbol_object_to_symbol (PyObject *obj);

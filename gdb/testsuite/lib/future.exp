@@ -308,8 +308,8 @@ proc gdb_default_target_compile_1 {source destfile type options} {
 	    if {[board_info $dest exists rustflags]} {
 		append add_flags " [target_info rustflags]"
 	    }
-	    if {[board_info $dest exists rustflags]} {
-		set compiler [target_info rustflags]
+	    if {[board_info $dest exists rustcompiler]} {
+		set compiler [target_info rustcompiler]
 	    } else {
 		set compiler [find_rustc]
 	    }
@@ -757,6 +757,13 @@ if { [array size use_gdb_compile] != 0 } {
     rename gdb_default_target_compile default_target_compile
 } else {
     unproc gdb_default_target_compile
+}
+
+# Dejagnu versions before 1.6.3 don't define isremote.
+if {[info procs isremote] == ""} {
+    proc isremote {board} {
+	return [is_remote $board]
+    }
 }
 
 # Various ccache versions provide incorrect debug info such as ignoring

@@ -3148,15 +3148,15 @@ Arguments (also strings) are passed to the command." },
   { "current_objfile", gdbpy_get_current_objfile, METH_NOARGS,
     "Return the current Objfile being loaded, or None." },
 
-  { "newest_frame", gdbpy_newest_frame, METH_NOARGS,
+  noargs_function<gdbpy_newest_frame> ("newest_frame",
     "newest_frame () -> gdb.Frame.\n\
-Return the newest frame object." },
-  { "selected_frame", gdbpy_selected_frame, METH_NOARGS,
+Return the newest frame object."),
+  noargs_function<gdbpy_selected_frame> ("selected_frame",
     "selected_frame () -> gdb.Frame.\n\
-Return the selected frame object." },
-  { "frame_stop_reason_string", gdbpy_frame_stop_reason_string, METH_VARARGS,
+Return the selected frame object."),
+  varargs_function<gdbpy_frame_stop_reason_string> ("frame_stop_reason_string",
     "stop_reason_string (Integer) -> String.\n\
-Return a string explaining unwind stop reason." },
+Return a string explaining unwind stop reason."),
 
   { "start_recording", gdbpy_start_recording, METH_VARARGS,
     "start_recording ([method] [, format]) -> gdb.Record.\n\
@@ -3268,9 +3268,9 @@ Register a TUI window constructor."),
     "architecture_names () -> List.\n\
 Return a list of all the architecture names GDB understands." },
 
-  { "connections", gdbpy_connections, METH_NOARGS,
+  noargs_function<gdbpy_connections> ("connections",
     "connections () -> List.\n\
-Return a list of gdb.TargetConnection objects." },
+Return a list of gdb.TargetConnection objects."),
 
   { "format_address", (PyCFunction) gdbpy_format_address,
     METH_VARARGS | METH_KEYWORDS,
