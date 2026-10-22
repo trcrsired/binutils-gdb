@@ -2728,7 +2728,7 @@ aarch64_linux_report_signal_info (struct gdbarch *gdbarch,
     return;
 
   CORE_ADDR fault_addr = 0;
-  long si_code = 0, si_errno = 0, si_pkey = -1;
+  long si_code = 0, si_errno = 0, si_prot_key = -1;
 
   try
     {
@@ -2739,7 +2739,7 @@ aarch64_linux_report_signal_info (struct gdbarch *gdbarch,
       si_code = parse_and_eval_long (gdb_si::get (si_key::siginfo_code));
       si_errno = parse_and_eval_long (gdb_si::get (si_key::siginfo_errno));
       if (tdep->has_poe ())
-	si_pkey = parse_and_eval_long (gdb_si::get (si_key::siginfo_pkey));
+	si_prot_key = parse_and_eval_long (gdb_si::get (si_key::siginfo_pkey));
 
       fault_addr
 	= parse_and_eval_long (gdb_si::get (si_key::siginfo_addr));
@@ -2796,7 +2796,7 @@ aarch64_linux_report_signal_info (struct gdbarch *gdbarch,
       uiout->text (_(" while accessing address "));
       uiout->field_core_addr ("fault-addr", gdbarch, fault_addr);
       uiout->text (_(" with Protection Key = "));
-      uiout->field_signed ("protection-key", si_pkey);
+      uiout->field_signed ("protection-key", si_prot_key);
     }
   else if (si_code != AARCH64_SEGV_CPERR)
     {
