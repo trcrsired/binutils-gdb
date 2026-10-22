@@ -136,6 +136,10 @@
    you don't. */
 #undef HAVE_DECL_ADDR_NO_RANDOMIZE
 
+/* Define to 1 if you have the declaration of
+   `AMD_DBGAPI_STATUS_ERROR_MEMORY_UNAVAILABLE', and to 0 if you don't. */
+#undef HAVE_DECL_AMD_DBGAPI_STATUS_ERROR_MEMORY_UNAVAILABLE
+
 /* Define to 1 if you have the declaration of `asprintf', and to 0 if you
    don't. */
 #undef HAVE_DECL_ASPRINTF
@@ -585,7 +589,7 @@
 /* Define to 1 if you have the <ws2tcpip.h> header file. */
 #undef HAVE_WS2TCPIP_H
 
-/* Define to 1 if zstd is enabled. */
+/* Define if zstd is available. */
 #undef HAVE_ZSTD
 
 /* Define to 1 if your system has the _etext variable. */

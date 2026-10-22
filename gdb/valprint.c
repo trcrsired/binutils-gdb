@@ -1300,6 +1300,14 @@ value_print_scalar_formatted (struct value *val,
 
   gdb_assert (val != NULL);
 
+  /* Treat a function or a method as if it were a pointer.  */
+  if (type->code () == TYPE_CODE_FUNC
+      || type->code () == TYPE_CODE_METHOD)
+    {
+      val = value_addr (val);
+      type = check_typedef (val->type ());
+    }
+
   /* If we get here with a string format, try again without it.  Go
      all the way back to the language printers, which may call us
      again.  */
@@ -1973,9 +1981,15 @@ value_print_array_elements (struct value *val, struct ui_file *stream,
   struct type *type = check_typedef (val->type ());
 
   elttype = type->target_type ();
-  unsigned bit_stride = type->bit_stride ();
+  ULONGEST bit_stride = type->bit_stride ();
   if (bit_stride == 0)
     bit_stride = 8 * check_typedef (elttype)->length ();
+
+  /* For packed arrays, the stride may be smaller than the element's target
+     type.  */
+  ULONGEST elt_bits = std::min (bit_stride,
+				8 * check_typedef (elttype)->length ());
+
   index_type = type->index_type ();
   if (index_type->code () == TYPE_CODE_RANGE)
     index_type = index_type->target_type ();
@@ -2026,7 +2040,7 @@ value_print_array_elements (struct value *val, struct ui_file *stream,
 
       struct value *element = val->from_component_bitsize (elttype,
 							   bit_stride * i,
-							   bit_stride);
+							   elt_bits);
       rep1 = i + 1;
       reps = 1;
       /* Only check for reps if repeat_count_threshold is not set to
@@ -2047,7 +2061,7 @@ value_print_array_elements (struct value *val, struct ui_file *stream,
 	      struct value *rep_elt
 		= val->from_component_bitsize (elttype,
 					       rep1 * bit_stride,
-					       bit_stride);
+					       elt_bits);
 	      bool repeated = ((available
 				&& rep_elt->entirely_available ()
 				&& element->contents_eq (rep_elt))

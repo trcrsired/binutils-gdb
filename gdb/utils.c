@@ -87,7 +87,10 @@ void (*deprecated_error_begin_hook) (void);
 /* Prototypes for local functions */
 
 static void set_screen_size (void);
-static void set_width (void);
+
+/* True once init_page_info has run and filtered printing can be used.  */
+
+static bool filtered_printing_initialized = false;
 
 /* Time spent in prompt_for_continue in the currently executing command
    waiting for user to respond.
@@ -419,13 +422,13 @@ internal_vproblem (struct internal_problem *problem,
       term_state.emplace ();
       target_terminal::ours_for_output ();
     }
-  if (filtered_printing_initialized ())
+  if (filtered_printing_initialized)
     begin_line ();
 
   /* Emit the message unless query will emit it below.  */
   if (problem->should_quit != internal_problem_ask
       || !confirm
-      || !filtered_printing_initialized ()
+      || !filtered_printing_initialized
       || !readline_initialized (current_ui)
       || problem->should_print_backtrace)
     gdb_printf (gdb_stderr, "%s\n", reason.c_str ());
@@ -438,7 +441,7 @@ internal_vproblem (struct internal_problem *problem,
       /* Default (yes/batch case) is to quit GDB.  When in batch mode
 	 this lessens the likelihood of GDB going into an infinite
 	 loop.  */
-      if (!confirm || !filtered_printing_initialized ()
+      if (!confirm || !filtered_printing_initialized
 	  || !readline_initialized (current_ui))
 	quit_p = 1;
       else
@@ -463,7 +466,7 @@ internal_vproblem (struct internal_problem *problem,
     {
       if (!can_dump_core_warn (LIMIT_MAX, reason.c_str ()))
 	dump_core_p = 0;
-      else if (!filtered_printing_initialized ()
+      else if (!filtered_printing_initialized
 	       || !readline_initialized (current_ui))
 	dump_core_p = 1;
       else
@@ -532,18 +535,12 @@ static struct internal_problem demangler_warning_problem = {
 };
 
 void
-demangler_vwarning (const char *file, int line, const char *fmt, va_list ap)
-{
-  internal_vproblem (&demangler_warning_problem, file, line, fmt, ap);
-}
-
-void
-demangler_warning (const char *file, int line, const char *string, ...)
+demangler_warning (const char *file, int line, const char *fmt, ...)
 {
   va_list ap;
 
-  va_start (ap, string);
-  demangler_vwarning (file, line, string, ap);
+  va_start (ap, fmt);
+  internal_vproblem (&demangler_warning_problem, file, line, fmt, ap);
   va_end (ap);
 }
 
@@ -1097,16 +1094,6 @@ static unsigned int lines_printed, chars_printed;
 
 static bool pagination_disabled_for_command;
 
-/* Buffer and start column of buffered text, for doing smarter word-
-   wrapping.  When someone calls wrap_here(), we start buffering output
-   that comes through gdb_puts().  If we see a newline, we just
-   spit it out and forget about the wrap_here().  If we see another
-   wrap_here(), we spit it out and remember the newer one.  If we see
-   the end of the line, we spit out a newline, the indent, and then
-   the buffered output.  */
-
-static bool filter_initialized = false;
-
 
 
 /* See utils.h.  */
@@ -1188,14 +1175,7 @@ init_page_info (void)
   rl_catch_sigwinch = 0;
 
   set_screen_size ();
-  set_width ();
-}
-
-/* Return nonzero if filtered printing is initialized.  */
-int
-filtered_printing_initialized (void)
-{
-  return filter_initialized;
+  filtered_printing_initialized = true;
 }
 
 set_batch_flag_and_restore_page_info::set_batch_flag_and_restore_page_info ()
@@ -1214,7 +1194,6 @@ set_batch_flag_and_restore_page_info::~set_batch_flag_and_restore_page_info ()
   lines_per_page = m_save_lines_per_page;
 
   set_screen_size ();
-  set_width ();
 }
 
 /* An approximation of SQRT(INT_MAX) that is:
@@ -1261,26 +1240,11 @@ set_screen_size (void)
   rl_set_screen_size (rows, cols);
 }
 
-/* Reinitialize WRAP_BUFFER.  */
+/* Callback for "set width" and "set height".  */
 
 static void
-set_width (void)
-{
-  if (chars_per_line == 0)
-    init_page_info ();
-
-  filter_initialized = true;
-}
-
-static void
-set_width_command (const char *args, int from_tty, struct cmd_list_element *c)
-{
-  set_screen_size ();
-  set_width ();
-}
-
-static void
-set_height_command (const char *args, int from_tty, struct cmd_list_element *c)
+set_screen_size_command (const char *args, int from_tty,
+			 cmd_list_element *c)
 {
   set_screen_size ();
 }
@@ -1294,7 +1258,6 @@ set_screen_width_and_height (int width, int height)
   chars_per_line = width;
 
   set_screen_size ();
-  set_width ();
 }
 
 /* Import termcap variable UP (instead of readline private variable
@@ -1571,7 +1534,7 @@ void
 pager_file::wrap_here (int indent)
 {
   /* This should have been allocated, but be paranoid anyway.  */
-  gdb_assert (filter_initialized);
+  gdb_assert (filtered_printing_initialized);
 
   flush_wrap_buffer ();
   if (chars_per_line == UINT_MAX)	/* No line overflow checking.  */
@@ -3142,121 +3105,6 @@ strcmp_iw (const char *string1, const char *string2)
 			       strncmp_iw_mode::MATCH_PARAMS, language_minimal);
 }
 
-/* This is like strcmp except that it ignores whitespace and treats
-   '(' as the first non-NULL character in terms of ordering.  Like
-   strcmp (and unlike strcmp_iw), it returns negative if STRING1 <
-   STRING2, 0 if STRING2 = STRING2, and positive if STRING1 > STRING2
-   according to that ordering.
-
-   If a list is sorted according to this function and if you want to
-   find names in the list that match some fixed NAME according to
-   strcmp_iw(LIST_ELT, NAME), then the place to start looking is right
-   where this function would put NAME.
-
-   This function must be neutral to the CASE_SENSITIVITY setting as the user
-   may choose it during later lookup.  Therefore this function always sorts
-   primarily case-insensitively and secondarily case-sensitively.
-
-   Here are some examples of why using strcmp to sort is a bad idea:
-
-   Whitespace example:
-
-   Say your partial symtab contains: "foo<char *>", "goo".  Then, if
-   we try to do a search for "foo<char*>", strcmp will locate this
-   after "foo<char *>" and before "goo".  Then lookup_partial_symbol
-   will start looking at strings beginning with "goo", and will never
-   see the correct match of "foo<char *>".
-
-   Parenthesis example:
-
-   In practice, this is less like to be an issue, but I'll give it a
-   shot.  Let's assume that '$' is a legitimate character to occur in
-   symbols.  (Which may well even be the case on some systems.)  Then
-   say that the partial symbol table contains "foo$" and "foo(int)".
-   strcmp will put them in this order, since '$' < '('.  Now, if the
-   user searches for "foo", then strcmp will sort "foo" before "foo$".
-   Then lookup_partial_symbol will notice that strcmp_iw("foo$",
-   "foo") is false, so it won't proceed to the actual match of
-   "foo(int)" with "foo".  */
-
-int
-strcmp_iw_ordered (const char *string1, const char *string2)
-{
-  const char *saved_string1 = string1, *saved_string2 = string2;
-  enum case_sensitivity case_pass = case_sensitive_off;
-
-  for (;;)
-    {
-      /* C1 and C2 are valid only if *string1 != '\0' && *string2 != '\0'.
-	 Provide stub characters if we are already at the end of one of the
-	 strings.  */
-      char c1 = 'X', c2 = 'X';
-
-      while (*string1 != '\0' && *string2 != '\0')
-	{
-	  while (c_isspace (*string1))
-	    string1++;
-	  while (c_isspace (*string2))
-	    string2++;
-
-	  switch (case_pass)
-	  {
-	    case case_sensitive_off:
-	      c1 = c_tolower (*string1);
-	      c2 = c_tolower (*string2);
-	      break;
-	    case case_sensitive_on:
-	      c1 = *string1;
-	      c2 = *string2;
-	      break;
-	  }
-	  if (c1 != c2)
-	    break;
-
-	  if (*string1 != '\0')
-	    {
-	      string1++;
-	      string2++;
-	    }
-	}
-
-      switch (*string1)
-	{
-	  /* Characters are non-equal unless they're both '\0'; we want to
-	     make sure we get the comparison right according to our
-	     comparison in the cases where one of them is '\0' or '('.  */
-	case '\0':
-	  if (*string2 == '\0')
-	    break;
-	  else
-	    return -1;
-	case '(':
-	  if (*string2 == '\0')
-	    return 1;
-	  else
-	    return -1;
-	default:
-	  if (*string2 == '\0' || *string2 == '(')
-	    return 1;
-	  else if (c1 > c2)
-	    return 1;
-	  else if (c1 < c2)
-	    return -1;
-	  /* PASSTHRU */
-	}
-
-      if (case_pass == case_sensitive_on)
-	return 0;
-
-      /* Otherwise the strings were equal in case insensitive way, make
-	 a more fine grained comparison in a case sensitive way.  */
-
-      case_pass = case_sensitive_on;
-      string1 = saved_string1;
-      string2 = saved_string2;
-    }
-}
-
 
 
 static void
@@ -3550,83 +3398,6 @@ gdb_filename_fnmatch (const char *pattern, const char *string, int flags)
   return fnmatch (pattern, string, flags);
 }
 
-/* Return the number of path elements in PATH.
-   / = 1
-   /foo = 2
-   /foo/ = 2
-   foo/bar = 2
-   foo/ = 1  */
-
-int
-count_path_elements (const char *path)
-{
-  int count = 0;
-  const char *p = path;
-
-  if (HAS_DRIVE_SPEC (p))
-    {
-      p = STRIP_DRIVE_SPEC (p);
-      ++count;
-    }
-
-  while (*p != '\0')
-    {
-      if (IS_DIR_SEPARATOR (*p))
-	++count;
-      ++p;
-    }
-
-  /* Backup one if last character is /, unless it's the only one.  */
-  if (p > path + 1 && IS_DIR_SEPARATOR (p[-1]))
-    --count;
-
-  /* Add one for the file name, if present.  */
-  if (p > path && !IS_DIR_SEPARATOR (p[-1]))
-    ++count;
-
-  return count;
-}
-
-/* Remove N leading path elements from PATH.
-   N must be non-negative.
-   If PATH has more than N path elements then return NULL.
-   If PATH has exactly N path elements then return "".
-   See count_path_elements for a description of how we do the counting.  */
-
-const char *
-strip_leading_path_elements (const char *path, int n)
-{
-  int i = 0;
-  const char *p = path;
-
-  gdb_assert (n >= 0);
-
-  if (n == 0)
-    return p;
-
-  if (HAS_DRIVE_SPEC (p))
-    {
-      p = STRIP_DRIVE_SPEC (p);
-      ++i;
-    }
-
-  while (i < n)
-    {
-      while (*p != '\0' && !IS_DIR_SEPARATOR (*p))
-	++p;
-      if (*p == '\0')
-	{
-	  if (i + 1 == n)
-	    return "";
-	  return NULL;
-	}
-      ++p;
-      ++i;
-    }
-
-  return p;
-}
-
 /* See utils.h.  */
 
 gdb::unique_xmalloc_ptr<char>
@@ -3888,7 +3659,7 @@ Set number of characters where GDB should wrap lines of its output."), _("\
 Show number of characters where GDB should wrap lines of its output."), _("\
 This affects where GDB wraps its output to fit the screen width.\n\
 Setting this to \"unlimited\" or zero prevents GDB from wrapping its output."),
-			    set_width_command,
+			    set_screen_size_command,
 			    show_chars_per_line,
 			    &setlist, &showlist);
 
@@ -3898,7 +3669,7 @@ Show number of lines in a page for GDB output pagination."), _("\
 This affects the number of lines after which GDB will pause\n\
 its output and ask you whether to continue.\n\
 Setting this to \"unlimited\" or zero causes GDB never pause during output."),
-			    set_height_command,
+			    set_screen_size_command,
 			    show_lines_per_page,
 			    &setlist, &showlist);
 
