@@ -473,7 +473,7 @@ fold_segment_align (etree_value_type *lhs)
 	}
       else
 	{
-	  if (!link_info.relro)
+	  if (!link_info.relro || !link_info.separate_code)
 	    expld.result.value += expld.dot & (maxpage - 1);
 	  if (seg->phase == exp_seg_done)
 	    {
@@ -503,6 +503,10 @@ fold_segment_relro_end (etree_value_type *lhs)
      in expld.result and exp in lhs.  */
   seg->relro = exp_seg_relro_end;
   seg->relro_offset = expld.result.value;
+  /* With -z noseparate-code we pack the RELRO and writable segments;
+     do not reserve the tail of .got.plt for RELRO in that case.  */
+  if (!link_info.separate_code)
+    seg->relro_offset = 0;
   if (expld.phase == lang_first_phase_enum
       || expld.section != bfd_abs_section_ptr)
     expld.result.valid_p = false;
@@ -513,14 +517,22 @@ fold_segment_relro_end (etree_value_type *lhs)
     {
       if (seg->phase == exp_seg_align_seen
 	  || seg->phase == exp_seg_relro_adjust)
-	seg->relro_end = lhs->value + expld.result.value;
+	seg->relro_end = lhs->value + seg->relro_offset;
 
       if (seg->phase == exp_seg_relro_adjust
 	  && (seg->relro_end & (seg->relropagesize - 1)))
 	{
-	  seg->relro_end += seg->relropagesize - 1;
-	  seg->relro_end &= ~(seg->relropagesize - 1);
-	  expld.result.value = seg->relro_end - expld.result.value;
+	  if (!link_info.separate_code)
+	    /* Pack the file offsets: put the first writable section
+	       after RELRO on the next page, keeping the offset of the
+	       virtual address congruent.  */
+	    expld.result.value = seg->relro_end + seg->relropagesize;
+	  else
+	    {
+	      seg->relro_end += seg->relropagesize - 1;
+	      seg->relro_end &= ~(seg->relropagesize - 1);
+	      expld.result.value = seg->relro_end - expld.result.value;
+	    }
 	}
       else
 	expld.result.value = lhs->value;
