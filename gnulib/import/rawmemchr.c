@@ -35,7 +35,13 @@ rawmemchr (const void *s, int c_in)
   /* Change this typedef to experiment with performance.  */
   typedef uintptr_t longword;
   /* If you change the "uintptr_t", you should change UINTPTR_WIDTH to match.
-     This verifies that the type does not have padding bits.  */
+     This verifies that the type does not have padding bits.  bionic's
+     <stdint.h> defines UINTPTR_WIDTH in terms of __UINTPTR_WIDTH__, which GCC
+     does not predefine, so derive the width from the type in that case.  */
+#ifndef __UINTPTR_WIDTH__
+# undef UINTPTR_WIDTH
+# define UINTPTR_WIDTH (sizeof (uintptr_t) * CHAR_BIT)
+#endif
   verify (UINTPTR_WIDTH == UCHAR_WIDTH * sizeof (longword));
 
   const unsigned char *char_ptr;

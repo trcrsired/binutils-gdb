@@ -79,7 +79,7 @@
    _FORTIFY_SOURCE there.  */
 
 #if (!defined _FORTIFY_SOURCE && defined __OPTIMIZE__ && __OPTIMIZE__ > 0 \
-     && !defined(__MINGW32__))
+     && !defined(__MINGW32__) && !defined(__ANDROID__))
 #define _FORTIFY_SOURCE 2
 #endif
 

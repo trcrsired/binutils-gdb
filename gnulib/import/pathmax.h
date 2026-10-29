@@ -47,6 +47,14 @@
 #  define _POSIX_PATH_MAX 256
 # endif
 
+# if defined __ANDROID__ && !defined PATH_MAX
+/* bionic's <sys/param.h> defines MAXPATHLEN as PATH_MAX, but PATH_MAX
+   comes from <linux/limits.h> and may not be exposed by the compiler's
+   <limits.h>.  Include it here so that the MAXPATHLEN fallback below does
+   not define PATH_MAX in terms of itself.  */
+#  include <linux/limits.h>
+# endif
+
 /* Don't include sys/param.h if it already has been.  */
 # if defined HAVE_SYS_PARAM_H && !defined PATH_MAX && !defined MAXPATHLEN
 #  include <sys/param.h>
