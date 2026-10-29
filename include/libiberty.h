@@ -48,6 +48,14 @@ extern "C" {
 
 #include <stdio.h>
 
+/* bionic's <sys/param.h> defines MAXPATHLEN in terms of PATH_MAX, but
+   PATH_MAX lives in <linux/limits.h> and is not exposed by every
+   compiler's <limits.h>.  Make it available before any PATH_MAX or
+   MAXPATHLEN use.  */
+#if defined (__ANDROID__) && !defined PATH_MAX
+# include <linux/limits.h>
+#endif
+
 /* If the OS supports it, ensure that the supplied stream is setup to
    avoid any multi-threaded locking.  Otherwise leave the FILE pointer
    unchanged.  If the stream is NULL do nothing.  */
