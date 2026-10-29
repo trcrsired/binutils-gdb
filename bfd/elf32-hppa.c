@@ -1454,9 +1454,7 @@ elf32_hppa_check_relocs (bfd *abfd,
 		}
 	      else
 		{
-		  /* Track dynamic relocs needed for local syms too.
-		     We really need local syms available to do this
-		     easily.  Oh well.  */
+		  /* Track dynamic relocs needed for local syms too.  */
 		  asection *sr;
 		  void *vpp;
 		  Elf_Internal_Sym *isym;
@@ -3560,7 +3558,7 @@ elf32_hppa_relocate_section (struct bfd_link_info *info,
       reloc_howto_type *howto;
       unsigned int r_symndx;
       struct elf32_hppa_link_hash_entry *hh;
-      Elf_Internal_Sym *sym;
+      const Elf_Internal_Sym *sym;
       asection *sym_sec;
       bfd_vma relocation;
       bfd_reloc_status_type rstatus;

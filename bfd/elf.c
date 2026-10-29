@@ -471,7 +471,8 @@ bfd_elf_get_elf_syms (bfd *ibfd,
   if (elf_use_dt_symtab_p (ibfd))
     {
       /* Use dynamic symbol table.  */
-      if (elf_tdata (ibfd)->dt_symtab_count != symcount + symoffset)
+      if (symoffset >= elf_tdata (ibfd)->dt_symtab_count
+	  || symcount > elf_tdata (ibfd)->dt_symtab_count - symoffset)
 	{
 	  bfd_set_error (bfd_error_invalid_operation);
 	  return NULL;
@@ -626,7 +627,7 @@ bfd_elf_get_elf_syms (bfd *ibfd,
 static const char *
 bfd_elf_sym_name_raw (bfd *abfd,
 		      Elf_Internal_Shdr *symtab_hdr,
-		      Elf_Internal_Sym *isym)
+		      const Elf_Internal_Sym *isym)
 {
   unsigned int iname = isym->st_name;
   unsigned int shindex = symtab_hdr->sh_link;
@@ -645,7 +646,7 @@ bfd_elf_sym_name_raw (bfd *abfd,
 const char *
 bfd_elf_sym_name (bfd *abfd,
 		  Elf_Internal_Shdr *symtab_hdr,
-		  Elf_Internal_Sym *isym,
+		  const Elf_Internal_Sym *isym,
 		  asection *sym_sec)
 {
   const char *name = bfd_elf_sym_name_raw (abfd, symtab_hdr, isym);
@@ -2606,16 +2607,16 @@ bfd_section_from_shdr (bfd *abfd, unsigned int shindex)
       if (hdr->sh_entsize != bed->s->sizeof_sym)
 	goto fail;
 
+      /* Ignore a zero sized symbol table.  */
+      if (hdr->sh_size < hdr->sh_entsize)
+	goto success;
+
+      /* sh_info must always point past the first symbol.  */
+      if (hdr->sh_info == 0)
+	goto fail;
+
       if (hdr->sh_info * hdr->sh_entsize > hdr->sh_size)
-	{
-	  if (hdr->sh_size != 0)
-	    goto fail;
-	  /* Some assemblers erroneously set sh_info to one with a
-	     zero sh_size.  ld sees this as a global symbol count
-	     of (unsigned) -1.  Fix it here.  */
-	  hdr->sh_info = 0;
-	  goto success;
-	}
+	goto fail;
 
       /* PR 18854: A binary might contain more than one symbol table.
 	 Unusual, but possible.  Warn, but continue.  */
@@ -2678,8 +2679,6 @@ bfd_section_from_shdr (bfd *abfd, unsigned int shindex)
 
 	if (i != shindex)
 	  ret = bfd_section_from_shdr (abfd, i);
-	/* else FIXME: we have failed to find the symbol table.
-	   Should we issue an error?  */
 	goto success;
       }
 
@@ -2690,17 +2689,16 @@ bfd_section_from_shdr (bfd *abfd, unsigned int shindex)
       if (hdr->sh_entsize != bed->s->sizeof_sym)
 	goto fail;
 
-      if (hdr->sh_info * hdr->sh_entsize > hdr->sh_size)
-	{
-	  if (hdr->sh_size != 0)
-	    goto fail;
+      /* Ignore a zero sized symbol table.  */
+      if (hdr->sh_size < hdr->sh_entsize)
+	goto success;
 
-	  /* Some linkers erroneously set sh_info to one with a
-	     zero sh_size.  ld sees this as a global symbol count
-	     of (unsigned) -1.  Fix it here.  */
-	  hdr->sh_info = 0;
-	  goto success;
-	}
+      /* sh_info must always point past the first symbol.  */
+      if (hdr->sh_info == 0)
+	goto fail;
+
+      if (hdr->sh_info * hdr->sh_entsize > hdr->sh_size)
+	goto fail;
 
       /* PR 18854: A binary might contain more than one dynamic symbol table.
 	 Unusual, but possible.  Warn, but continue.  */
@@ -2805,13 +2803,15 @@ bfd_section_from_shdr (bfd *abfd, unsigned int shindex)
     case SHT_REL:
     case SHT_RELA:
     case SHT_RELR:
-      /* *These* do a lot of work -- but build no sections!  */
+      /* *These* do a lot of work -- but usually build no sections!  */
       {
 	asection *target_sect;
 	Elf_Internal_Shdr *hdr2, **p_hdr;
 	unsigned int num_sec = elf_numsections (abfd);
 	struct bfd_elf_section_data *esdt;
 	bfd_size_type size;
+	const char *bad_field;
+	unsigned int bad_val;
 
 	if (hdr->sh_type == SHT_REL)
 	  size = bed->s->sizeof_rel;
@@ -2822,20 +2822,10 @@ bfd_section_from_shdr (bfd *abfd, unsigned int shindex)
 	if (hdr->sh_entsize != size)
 	  goto fail;
 
-	/* Check for a bogus link to avoid crashing.  */
-	if (hdr->sh_link >= num_sec)
-	  {
-	    _bfd_error_handler
-	      /* xgettext:c-format */
-	      (_("%pB: invalid link %u for reloc section %s (index %u)"),
-	       abfd, hdr->sh_link, name, shindex);
-	    ret = _bfd_elf_make_section_from_shdr (abfd, hdr, name, shindex);
-	    goto success;
-	  }
-
 	/* Get the symbol table.  */
-	if ((elf_elfsections (abfd)[hdr->sh_link]->sh_type == SHT_SYMTAB
-	     || elf_elfsections (abfd)[hdr->sh_link]->sh_type == SHT_DYNSYM)
+	if (hdr->sh_link < num_sec
+	    && (elf_elfsections (abfd)[hdr->sh_link]->sh_type == SHT_SYMTAB
+		|| elf_elfsections (abfd)[hdr->sh_link]->sh_type == SHT_DYNSYM)
 	    && ! bfd_section_from_shdr (abfd, hdr->sh_link))
 	  goto fail;
 
@@ -2847,17 +2837,35 @@ bfd_section_from_shdr (bfd *abfd, unsigned int shindex)
 	   also can't use it as a reloc section if it points to the
 	   null section, an invalid section, another reloc section, or
 	   its sh_link points to the null section.  */
+	bad_field = NULL;
+	bad_val = 0;
 	if (((abfd->flags & (DYNAMIC | EXEC_P)) != 0
 	     && (hdr->sh_flags & SHF_ALLOC) != 0)
 	    || (hdr->sh_flags & SHF_COMPRESSED) != 0
-	    || hdr->sh_type == SHT_RELR
-	    || hdr->sh_link == SHN_UNDEF
-	    || hdr->sh_link != elf_onesymtab (abfd)
-	    || hdr->sh_info == SHN_UNDEF
-	    || hdr->sh_info >= num_sec
-	    || elf_elfsections (abfd)[hdr->sh_info]->sh_type == SHT_REL
-	    || elf_elfsections (abfd)[hdr->sh_info]->sh_type == SHT_RELA)
+	    || hdr->sh_type == SHT_RELR)
+	  bad_field = "";
+	else if (hdr->sh_link == SHN_UNDEF
+		 || hdr->sh_link != elf_onesymtab (abfd))
 	  {
+	    bad_field = "sh_link";
+	    bad_val = hdr->sh_link;
+	  }
+	else if (hdr->sh_info == SHN_UNDEF
+		 || hdr->sh_info >= num_sec
+		 || elf_elfsections (abfd)[hdr->sh_info]->sh_type == SHT_REL
+		 || elf_elfsections (abfd)[hdr->sh_info]->sh_type == SHT_RELA)
+	  {
+	    bad_field = "sh_info";
+	    bad_val = hdr->sh_info;
+	  }
+
+	if (bad_field)
+	  {
+	    if (*bad_field)
+	      _bfd_error_handler
+		/* xgettext:c-format */
+		(_("%pB: not using relocs in %s (index %u) due to %s %u"),
+		 abfd, name, shindex, bad_field, bad_val);
 	    ret = _bfd_elf_make_section_from_shdr (abfd, hdr, name, shindex);
 	    goto success;
 	  }
@@ -13324,7 +13332,7 @@ _bfd_elf_reloc_type_class (const struct bfd_link_info *info ATTRIBUTE_UNUSED,
 
 bfd_vma
 _bfd_elf_rela_local_sym (bfd *abfd,
-			 Elf_Internal_Sym *sym,
+			 const Elf_Internal_Sym *sym,
 			 asection **psec,
 			 Elf_Internal_Rela *rel)
 {
@@ -13360,7 +13368,7 @@ _bfd_elf_rela_local_sym (bfd *abfd,
 
 bfd_vma
 _bfd_elf_rel_local_sym (bfd *abfd,
-			Elf_Internal_Sym *sym,
+			const Elf_Internal_Sym *sym,
 			asection **psec,
 			bfd_vma addend)
 {
