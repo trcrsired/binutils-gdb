@@ -6852,18 +6852,31 @@ lang_size_relro_segment (bool *relax, bool check_regions)
 
   if (link_info.relro && expld.dataseg.relro_end)
     {
-      bfd_vma data_initial_base = expld.dataseg.base;
-      bfd_vma data_relro_end = lang_size_relro_segment_1 ();
-
-      lang_reset_memory_regions ();
-      one_lang_size_sections_pass (relax, check_regions);
-
-      /* Assignments to dot, or to output section address in a user
-	 script have increased padding over the original.  Revert.  */
-      if (expld.dataseg.relro_end > data_relro_end)
+      if (!link_info.separate_code)
 	{
-	  expld.dataseg.base = data_initial_base;
-	  do_reset = true;
+	  /* Pack the RELRO and writable segments: leave the RELRO
+	     sections at the addresses chosen by the first pass and
+	     let fold_segment_relro_end move the first writable
+	     section to the next page.  */
+	  expld.dataseg.phase = exp_seg_relro_adjust;
+	  lang_reset_memory_regions ();
+	  one_lang_size_sections_pass (relax, check_regions);
+	}
+      else
+	{
+	  bfd_vma data_initial_base = expld.dataseg.base;
+	  bfd_vma data_relro_end = lang_size_relro_segment_1 ();
+
+	  lang_reset_memory_regions ();
+	  one_lang_size_sections_pass (relax, check_regions);
+
+	  /* Assignments to dot, or to output section address in a user
+	     script have increased padding over the original.  Revert.  */
+	  if (expld.dataseg.relro_end > data_relro_end)
+	    {
+	      expld.dataseg.base = data_initial_base;
+	      do_reset = true;
+	    }
 	}
     }
   else if (lang_size_segment ())

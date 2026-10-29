@@ -5329,6 +5329,19 @@ bfd_elf_map_sections_to_segments (bfd *abfd,
 		 the previous section, then we need a new segment.  */
 	      new_segment = true;
 	    }
+	  else if (info != NULL
+		   && info->relro
+		   && !info->separate_code
+		   && last_hdr->lma < info->relro_end
+		   && hdr->lma >= info->relro_end)
+	    {
+	      /* With -z noseparate-code the first writable section
+		 after RELRO is placed one page past the end of RELRO so
+		 that its file offset can be packed; it cannot share the
+		 RELRO PT_LOAD as that would require filling the virtual
+		 address gap in the file.  */
+	      new_segment = true;
+	    }
 	  else if ((abfd->flags & D_PAGED) != 0
 		   && (((last_hdr->lma + last_size - 1) & -maxpagesize)
 		       == (hdr->lma & -maxpagesize)))
