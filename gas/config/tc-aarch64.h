@@ -366,6 +366,12 @@ extern bool aarch64_fix_adjustable (struct fix *);
 
 #ifdef TE_PE
 
+/* The FunctionLength field of the AArch64 SEH xdata records can only be
+   computed once the code sections have been relaxed, since the padding
+   inserted for alignment is not known before then.  */
+extern void obj_coff_seh_aarch64_post_relax (void);
+#define md_post_relax_hook obj_coff_seh_aarch64_post_relax ()
+
 #define O_secrel O_md1
 
 #define TC_DWARF2_EMIT_OFFSET  tc_pe_dwarf2_emit_offset

@@ -241,6 +241,46 @@ out_four (int data)
   md_number_to_chars (p, data, 4);
 }
 
+/* AArch64 xdata records carry the length of the function in the header
+   word.  The padding that alignment fragments add to the code is only
+   known once the section has been relaxed, which happens long after the
+   record is written, so remember where each length field is and fix it
+   up in obj_coff_seh_aarch64_post_relax.  */
+
+struct seh_aarch64_length_fixup
+{
+  struct seh_aarch64_length_fixup *next;
+  char *field;
+  symbolS *start;
+  symbolS *end;
+};
+
+static struct seh_aarch64_length_fixup *seh_aarch64_length_fixups;
+
+/* Patch the FunctionLength field of all AArch64 xdata records.  */
+
+void
+obj_coff_seh_aarch64_post_relax (void)
+{
+  struct seh_aarch64_length_fixup *f, *next;
+
+  for (f = seh_aarch64_length_fixups; f != NULL; f = next)
+    {
+      long bytes = (long) (S_GET_VALUE (f->end) - S_GET_VALUE (f->start));
+      unsigned int word = bfd_getl32 ((bfd_byte *) f->field);
+
+      if (bytes < 0)
+	bytes = 0;
+      word &= ~0x3ffffu;
+      word |= ((unsigned int) (bytes >> 2)) & 0x3ffffu;
+      bfd_putl32 (word, (bfd_byte *) f->field);
+
+      next = f->next;
+      free (f);
+    }
+  seh_aarch64_length_fixups = NULL;
+}
+
 /* Write out prologue data for x64.  */
 
 static void
@@ -1369,7 +1409,10 @@ seh_aarch64_write_function_xdata (seh_context *c)
 
   /* Calculate function length in 4-byte units.  Compute it from the
      symbols' fragment positions rather than resolve_expression, which
-     can fail when the symbols span multiple fragments.  */
+     can fail when the symbols span multiple fragments.  This is only an
+     estimate: the padding inserted for alignment is not known until the
+     code section is relaxed, so the value is corrected in
+     obj_coff_seh_aarch64_post_relax.  */
   {
     addressT off1, off2;
     fragS *f1 = symbol_get_frag_and_value (c->start_addr, &off1);
@@ -1426,7 +1469,19 @@ seh_aarch64_write_function_xdata (seh_context *c)
   if (c->handler_flags & (UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER))
     header |= (1 << 20);
 
-  out_four (header);
+  {
+    char *field = frag_more (4);
+    struct seh_aarch64_length_fixup *f;
+
+    md_number_to_chars (field, header, 4);
+
+    f = XNEW (struct seh_aarch64_length_fixup);
+    f->field = field;
+    f->start = c->start_addr;
+    f->end = c->end_addr;
+    f->next = seh_aarch64_length_fixups;
+    seh_aarch64_length_fixups = f;
+  }
 
   /* If extended code words needed, emit extension word.
      bits [15:0] = Epilog Count, bits [23:16] = Code Words.
@@ -1453,7 +1508,8 @@ seh_aarch64_write_function_xdata (seh_context *c)
           out_one (AARCH64_UOP_NOP);
     }
 
-  /* If exception handler present, emit it.  */
+  /* If exception handler present, emit it.  The handler data follows the
+     record implicitly, in the next subsection, exactly as for x64.  */
   if (c->handler_flags & (UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER))
     {
       if (c->handler.X_op == O_symbol)
