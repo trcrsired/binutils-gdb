@@ -289,12 +289,19 @@ bool debug_memory = false;	/* show target memory accesses */
 bool debug_exceptions = false;	/* show target exceptions */
 
 /* User options.  */
+
 static bool new_console = false;
 #ifdef __CYGWIN__
 static bool cygwin_exceptions = false;
 #endif
 static bool new_group = true;
-static bool useshell = false;		/* use shell for subprocesses */
+
+/* Use shell for subprocesses.  */
+#ifdef __CYGWIN__
+static bool useshell = false;
+#else
+static constexpr bool useshell = false;
+#endif
 
 /* See windows_nat_target::resume to understand why this is commented
    out.  */
@@ -808,7 +815,7 @@ signal_event_command (const char *args, int from_tty)
 
   if ((errno == ERANGE) || (event_id == 0) || (event_id > UINTPTR_MAX) ||
       ((HANDLE) event_id == INVALID_HANDLE_VALUE))
-    error (_("Failed to convert `%s' to event id"), args);
+    error (_("Failed to convert \"%s\" to event id"), args);
 
   SetEvent ((HANDLE) event_id);
   CloseHandle ((HANDLE) event_id);
@@ -2902,7 +2909,8 @@ windows_nat_target::create_inferior (const char *exec_file,
   ensure_only_one_process ();
 
   if (!exec_file)
-    error (_("No executable specified, use `target exec'."));
+    error (_("No executable specified, use \"%ps\"."),
+	   styled_string (command_style.style (), "target exec"));
 
   const char *inferior_cwd = current_inferior ()->cwd ().c_str ();
   std::string expanded_infcwd;
