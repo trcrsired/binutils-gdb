@@ -6655,20 +6655,12 @@ static int
 load_insn_p (void)
 {
   unsigned int dest;
-  int any_vex_p = is_any_vex_encoding (&i.tm);
   unsigned int base_opcode = i.tm.base_opcode | 1;
 
-  if (!any_vex_p)
-    {
-      /* Anysize insns: lea, invlpg, clflush, prefetch*, bndmk, bndcl, bndcu,
-	 bndcn, bndstx, bndldx, clflushopt, clwb, cldemote.  */
-      if (i.tm.opcode_modifier.operandconstraint == ANY_SIZE)
-	return 0;
-
-      /* pop.   */
-      if (i.tm.mnem_off == MN_pop)
-	return 1;
-    }
+  /* Anysize insns: lea, invlpg, clflush, prefetch*, bndmk, bndcl, bndcu,
+     bndcn, bndstx, bndldx, clflushopt, clwb, cldemote.  */
+  if (i.tm.opcode_modifier.operandconstraint == ANY_SIZE)
+    return 0;
 
   if (i.tm.opcode_space == SPACE_BASE)
     {
@@ -6678,7 +6670,7 @@ load_insn_p (void)
 	return 1;
 
       /* movs, cmps, lods, scas.  */
-      if ((i.tm.base_opcode | 0xb) == 0xaf)
+      if ((base_opcode | 0xa) == 0xaf)
 	return 1;
 
       /* outs, xlatb.  */
@@ -6691,17 +6683,28 @@ load_insn_p (void)
 
   /* No memory operand.  */
   if (!i.mem_operands)
-    return 0;
+    {
+      /* pop.   */
+      if (i.tm.mnem_off == MN_pop)
+	return 1;
 
-  if (any_vex_p)
+    return 0;
+    }
+
+  if (is_any_vex_encoding (&i.tm))
     {
       if (i.tm.mnem_off == MN_vldmxcsr)
 	return 1;
     }
   else if (i.tm.opcode_space == SPACE_BASE)
     {
-      /* test, not, neg, mul, imul, div, idiv.  */
-      if (base_opcode == 0xf7 && i.tm.extension_opcode != 1)
+      /* add, or, adc, sbb, and, sub, xor, cmp, test, xchg.  */
+      if ((base_opcode | 0x38) == 0x39
+	  || (base_opcode | 2) == 0x87)
+	return 1;
+
+      /* test, neg, mul, imul, div, idiv.  */
+      if (base_opcode == 0xf7 && i.tm.extension_opcode != 2)
 	return 1;
 
       /* inc, dec.  */
@@ -6709,12 +6712,19 @@ load_insn_p (void)
 	return 1;
 
       /* add, or, adc, sbb, and, sub, xor, cmp.  */
-      if (i.tm.base_opcode >= 0x80 && i.tm.base_opcode <= 0x83)
+      if ((base_opcode | 2) == 0x83)
 	return 1;
 
       /* rol, ror, rcl, rcr, shl/sal, shr, sar. */
       if ((base_opcode == 0xc1 || (base_opcode | 2) == 0xd3)
-	  && i.tm.extension_opcode != 6)
+	  && (!operand_type_check (i.types[0], imm)
+	      || i.op[0].imms->X_op != O_constant
+	      || i.op[0].imms->X_add_number != 0))
+	return 1;
+
+      /* arpl.  (Also movxsd, which otherwise would be covered towards
+	 the end of the function.)  */
+      if (i.tm.base_opcode == 0x63)
 	return 1;
 
       /* Check for x87 instructions.  */
@@ -6760,30 +6770,60 @@ load_insn_p (void)
   else if (i.tm.opcode_space == SPACE_0F)
     {
       /* bt, bts, btr, btc.  */
-      if (i.tm.base_opcode == 0xba
-	  && (i.tm.extension_opcode | 3) == 7)
+      if ((i.tm.base_opcode == 0xba
+	   && (i.tm.extension_opcode | 3) == 7)
+	  || (i.tm.base_opcode | 0x18) == 0xbb)
 	return 1;
 
-      /* cmpxchg8b, cmpxchg16b, xrstors, vmptrld.  */
+      /* shld, shrd.  */
+      if ((base_opcode | 8) == 0xad
+	  && (!operand_type_check (i.types[0], imm)
+	      || i.op[0].imms->X_op != O_constant
+	      || i.op[0].imms->X_add_number != 0))
+	return 1;
+
+      /* cmpxchg8b, cmpxchg16b, xrstors, vmptrld, vmxon, vmclear, vmptrst.  */
       if (i.tm.base_opcode == 0xc7
-	  && i.tm.opcode_modifier.opcodeprefix == PREFIX_NONE
-	  && (i.tm.extension_opcode == 1 || i.tm.extension_opcode == 3
-	      || i.tm.extension_opcode == 6))
+	  && ((i.tm.opcode_modifier.opcodeprefix == PREFIX_NONE
+	       && ((i.tm.extension_opcode | 2) == 3))
+	      || (i.tm.extension_opcode | 1) == 7))
 	return 1;
 
-      /* fxrstor, ldmxcsr, xrstor.  */
+      /* vmread.  (Also vcvtts{s,d}2usi and vcvttp{s,d}2uqq, which otherwise
+	 would be covered towards the end of the function.)  */
+      if (i.tm.base_opcode == 0x78)
+	return 1;
+
+      /* fxrstor, ldmxcsr, xrstor, xsave, xsaveopt.  */
       if (i.tm.base_opcode == 0xae
 	  && (i.tm.extension_opcode == 1
 	      || i.tm.extension_opcode == 2
-	      || i.tm.extension_opcode == 5))
+	      || i.tm.extension_opcode == 5
+	      || (i.tm.opcode_modifier.opcodeprefix == PREFIX_NONE
+		  && (i.tm.extension_opcode | 2) == 6)))
 	return 1;
 
-      /* lgdt, lidt, lmsw.  */
-      if (i.tm.base_opcode == 0x01
+      /* lldt, verr, verw.  */
+      if (i.tm.base_opcode == 0x00
 	  && (i.tm.extension_opcode == 2
-	      || i.tm.extension_opcode == 3
-	      || i.tm.extension_opcode == 6))
+	      || (i.tm.extension_opcode | 1) == 5))
 	return 1;
+
+      /* lgdt, lmsw.  */
+      if (i.tm.base_opcode == 0x01
+	  && (i.tm.extension_opcode | 4) == 6)
+	return 1;
+
+      /* cmpxchg, xadd.  */
+      if (base_opcode == 0xb1 || base_opcode == 0xc1)
+	return 1;
+    }
+  else if (i.tm.opcode_space == SPACE_0F38)
+    {
+      /* invpcid.  */
+      if (i.tm.base_opcode == 0x82
+	  && i.tm.opcode_modifier.opcodeprefix == PREFIX_0X66)
+	return 0;
     }
 
   dest = i.operands - 1;
@@ -6793,15 +6833,6 @@ load_insn_p (void)
        || i.reg_operands + i.mem_operands == 4)
       && i.types[dest].bitfield.imm8)
     dest--;
-
-  /* add, or, adc, sbb, and, sub, xor, cmp, test, xchg.  */
-  if (i.tm.opcode_space == SPACE_BASE
-      && ((base_opcode | 0x38) == 0x39
-	  || (base_opcode | 2) == 0x87))
-    return 1;
-
-  if (i.tm.mnem_off == MN_xadd)
-    return 1;
 
   /* Check for load instruction.  */
   return (i.types[dest].bitfield.class != ClassNone
